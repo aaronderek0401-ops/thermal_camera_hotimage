@@ -167,7 +167,12 @@ static void DrawHQImage(int16_t* pImage, tRGBcolor* pPalette, uint16_t PaletteSi
                 colorIdx = PaletteSize - 1;
             }
 
-            uint16_t color = RGB565(pPalette[colorIdx].r, pPalette[colorIdx].g, pPalette[colorIdx].b);
+            // Invert palette mapping so higher temperatures map to 'hot' colors
+            int16_t invIdx = (int16_t)(PaletteSize - 1 - colorIdx);
+            if (invIdx < 0) invIdx = 0;
+            if (invIdx >= PaletteSize) invIdx = PaletteSize - 1;
+
+            uint16_t color = RGB565(pPalette[invIdx].r, pPalette[invIdx].g, pPalette[invIdx].b);
             dispcolor_DrawPixel((width - col - 1) + X, row + Y, color);
         }
     }
