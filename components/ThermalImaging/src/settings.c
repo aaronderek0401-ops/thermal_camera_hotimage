@@ -12,7 +12,7 @@ static nvs_handle SettingsHandle;
 structSettingsParms settingsParms = {
     Emissivity : 0.95,
     ScaleMode : LINEAR,
-    MLX90640FPS : 4,
+    MLX90640FPS : 5,  // 设置为16 Hz (FPS_RATES[5] = 16)
     Resolution : 2,
     AutoScaleMode : 1,
     minTempNew : SCALE_DEFAULT_MIN,
