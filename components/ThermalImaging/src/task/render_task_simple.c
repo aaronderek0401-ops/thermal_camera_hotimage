@@ -3,6 +3,7 @@
 #include "st7789.h"
 #include "palette.h"
 #include "IDW.h"
+#include "CelsiusSymbol.h"
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
@@ -45,6 +46,108 @@ static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* max
     *minTemp = localMin;
     *maxTemp = localMax;
     return true;
+}
+
+// 计算MLX90640的温度数据 - 参考render_task.c
+static void CalcTempFromMLX90640(sMlxData* pMlxData)
+{
+    const float* pThermoImage = pMlxData->ThermoImage;
+
+    // 计算屏幕中心的温度 累加中间4个像素的值
+    pMlxData->CenterTemp = 
+        pThermoImage[THERMALIMAGE_RESOLUTION_WIDTH * ((THERMALIMAGE_RESOLUTION_HEIGHT >> 1) - 1) + ((THERMALIMAGE_RESOLUTION_WIDTH >> 1) - 1)] +
+        pThermoImage[THERMALIMAGE_RESOLUTION_WIDTH * ((THERMALIMAGE_RESOLUTION_HEIGHT >> 1) - 1) + (THERMALIMAGE_RESOLUTION_WIDTH >> 1)] +
+        pThermoImage[THERMALIMAGE_RESOLUTION_WIDTH * (THERMALIMAGE_RESOLUTION_HEIGHT >> 1) + ((THERMALIMAGE_RESOLUTION_WIDTH >> 1) - 1)] +
+        pThermoImage[THERMALIMAGE_RESOLUTION_WIDTH * (THERMALIMAGE_RESOLUTION_HEIGHT >> 1) + (THERMALIMAGE_RESOLUTION_WIDTH >> 1)];
+    pMlxData->CenterTemp /= 4;
+
+    // 搜索帧中的最小和最大温度 及坐标
+    pMlxData->minT = MAX_TEMP;
+    pMlxData->maxT = MIN_TEMP;
+
+    for (uint8_t y = 0; y < THERMALIMAGE_RESOLUTION_HEIGHT; y++) {
+        for (uint8_t x = 0; x < THERMALIMAGE_RESOLUTION_WIDTH; x++) {
+            float temp = pThermoImage[y * THERMALIMAGE_RESOLUTION_WIDTH + x];
+
+            if (pMlxData->maxT < temp) {
+                pMlxData->maxT = temp;
+                pMlxData->maxT_X = x;
+                pMlxData->maxT_Y = y;
+            }
+
+            if (pMlxData->minT > temp) {
+                pMlxData->minT = temp;
+                pMlxData->minT_X = x;
+                pMlxData->minT_Y = y;
+            }
+        }
+    }
+
+    if (pMlxData->maxT > MAX_TEMP) {
+        pMlxData->maxT = MAX_TEMP;
+    }
+
+    if (pMlxData->minT < MIN_TEMP) {
+        pMlxData->minT = MIN_TEMP;
+    }
+}
+
+// 绘制中心温度显示 - 参考render_task.c
+static void DrawCenterTempColor(uint16_t cX, uint16_t cY, float Temp, uint16_t color)
+{
+    char str[32];
+    sprintf(str, "%.1f%s", Temp, CELSIUS_SYMBOL);
+    
+    int16_t strWidth = strlen(str) * 6;  // FONTID_6X8M字体宽度
+    int16_t strHeight = 8;
+    
+    dispcolor_printf(cX - (strWidth >> 1), cY - (strHeight >> 1), FONTID_6X8M, color, "%s", str);
+}
+
+static void DrawCenterTemp(uint16_t X, uint16_t Y, uint16_t Width, uint16_t Height, float CenterTemp)
+{
+    uint16_t cX = (Width >> 1) + X;
+    uint16_t cY = (Height >> 1) + Y;
+
+    // 渲染阴影黑色
+    DrawCenterTempColor(cX + 1, cY + 1, CenterTemp, BLACK);
+    // 渲染白色
+    DrawCenterTempColor(cX, cY, CenterTemp, WHITE);
+}
+
+// 绘制最大最小温度标记 - 参考render_task.c的DrawMarkersHQ
+static void DrawMarkersHQ(sMlxData* pMlxData, uint16_t img_x, uint16_t img_y, uint16_t img_w, uint16_t img_h)
+{
+    uint8_t lineHalf = 4;
+    
+    // 计算缩放比例
+    float scaleX = (float)img_w / THERMALIMAGE_RESOLUTION_WIDTH;
+    float scaleY = (float)img_h / THERMALIMAGE_RESOLUTION_HEIGHT;
+
+    // 绘制最大温度标记 (红色十字)
+    int16_t x = (THERMALIMAGE_RESOLUTION_WIDTH - pMlxData->maxT_X - 1) * scaleX + img_x;
+    int16_t y = pMlxData->maxT_Y * scaleY + img_y;
+
+    uint16_t mainColor = RED;
+    dispcolor_DrawLine(x + 1, y - lineHalf + 1, x + 1, y + lineHalf + 1, BLACK);
+    dispcolor_DrawLine(x - lineHalf + 1, y + 1, x + lineHalf + 1, y + 1, BLACK);
+    dispcolor_DrawLine(x - lineHalf + 1, y - lineHalf + 1, x + lineHalf + 1, y + lineHalf + 1, BLACK);
+    dispcolor_DrawLine(x - lineHalf + 1, y + lineHalf + 1, x + lineHalf + 1, y - lineHalf + 1, BLACK);
+
+    dispcolor_DrawLine(x, y - lineHalf, x, y + lineHalf, mainColor);
+    dispcolor_DrawLine(x - lineHalf, y, x + lineHalf, y, mainColor);
+    dispcolor_DrawLine(x - lineHalf, y - lineHalf, x + lineHalf, y + lineHalf, mainColor);
+    dispcolor_DrawLine(x - lineHalf, y + lineHalf, x + lineHalf, y - lineHalf, mainColor);
+
+    // 绘制最小温度标记 (蓝色X)
+    x = (THERMALIMAGE_RESOLUTION_WIDTH - pMlxData->minT_X - 1) * scaleX + img_x;
+    y = pMlxData->minT_Y * scaleY + img_y;
+
+    mainColor = RGB565(0, 200, 245);
+    dispcolor_DrawLine(x - lineHalf + 1, y - lineHalf + 1, x + lineHalf + 1, y + lineHalf + 1, BLACK);
+    dispcolor_DrawLine(x - lineHalf + 1, y + lineHalf + 1, x + lineHalf + 1, y - lineHalf + 1, BLACK);
+    dispcolor_DrawLine(x - lineHalf, y - lineHalf, x + lineHalf, y + lineHalf, mainColor);
+    dispcolor_DrawLine(x - lineHalf, y + lineHalf, x + lineHalf, y - lineHalf, mainColor);
 }
 
 // 高质量图像绘制函数 - 参考render_task.c的DrawHQImage
@@ -148,12 +251,17 @@ void render_task(void* arg)
             sMlxData* frame = &pMlxData[bufferIndex];
             perf_mlx_read = xTaskGetTickCount();
 
-            // 计算温度范围
-            float minTemp = MIN_TEMP;
-            float maxTemp = MIN_TEMP + 1;
-            if (!compute_temp_range(frame, &minTemp, &maxTemp)) {
-                printf("Invalid MLX90640 temperature frame\n");
-                continue;
+            // 计算最大温度、最小温度、中间温度 - 参考render_task.c
+            CalcTempFromMLX90640(frame);
+
+            // 使用自动刻度模式或手动模式
+            float minTemp, maxTemp;
+            if (settingsParms.AutoScaleMode) {
+                minTemp = frame->minT;
+                maxTemp = frame->maxT;
+            } else {
+                minTemp = settingsParms.minTempNew;
+                maxTemp = settingsParms.maxTempNew;
             }
 
             float tempRange = maxTemp - minTemp;
@@ -198,10 +306,21 @@ void render_task(void* arg)
             // 步骤3: 绘制高质量图像到指定区域
             DrawHQImage(TermoHqImage16, pPaletteImage, paletteSteps, img_x_start, img_y_start, 
                        img_width, img_height, minTemp);
+            
+            // 热图上的最大/最小标记和中心温度 - 参考render_task.c
+            if (settingsParms.TempMarkers) {
+                // 在屏幕中央显示温度
+                DrawCenterTemp(img_x_start, img_y_start, img_width, img_height, frame->CenterTemp);
+                
+                // 标记最大最小点
+                DrawMarkersHQ(frame, img_x_start, img_y_start, img_width, img_height);
+            }
+            
             perf_render = xTaskGetTickCount();
             
             // 显示温度范围信息和帧率
-            dispcolor_printf(10, 210, FONTID_16F, WHITE, "Min:%.1fC Max:%.1fC", minTemp, maxTemp);
+            dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Max:%.1f%s Min:%.1f%s Ctr:%.1f%s", 
+                frame->maxT, CELSIUS_SYMBOL, frame->minT, CELSIUS_SYMBOL, frame->CenterTemp, CELSIUS_SYMBOL);
             if (actual_fps > 0.0f) {
                 dispcolor_printf(10, 225, FONTID_16F, WHITE, "Actual: %.1f FPS (Set: %.1f)", 
                     actual_fps, FPS_RATES[settingsParms.MLX90640FPS]);
