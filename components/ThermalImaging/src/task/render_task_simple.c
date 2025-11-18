@@ -1,11 +1,15 @@
 #include "thermalimaging_simple.h"
 #include "dispcolor.h"
 #include "st7789.h"
+#include "palette.h"
+#include "IDW.h"
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
 #include <float.h>
 #include <stdbool.h>
+
+#define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
 {
@@ -43,6 +47,29 @@ static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* max
     return true;
 }
 
+// 高质量图像绘制函数 - 参考render_task.c的DrawHQImage
+static void DrawHQImage(int16_t* pImage, tRGBcolor* pPalette, uint16_t PaletteSize, 
+                       uint16_t X, uint16_t Y, uint16_t width, uint16_t height, float minTemp)
+{
+    int cnt = 0;
+
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            int16_t colorIdx = pImage[cnt] - (int16_t)(minTemp * TEMP_SCALE);
+            cnt++;
+
+            if (colorIdx < 0) {
+                colorIdx = 0;
+            } else if (colorIdx >= PaletteSize) {
+                colorIdx = PaletteSize - 1;
+            }
+
+            uint16_t color = RGB565(pPalette[colorIdx].r, pPalette[colorIdx].g, pPalette[colorIdx].b);
+            dispcolor_DrawPixel((width - col - 1) + X, row + Y, color);
+        }
+    }
+}
+
 // 外部变量声明 (来自mlx90640_task.c)
 extern sMlxData* pMlxData;
 extern EventGroupHandle_t pHandleEventGroup;
@@ -51,15 +78,37 @@ extern EventGroupHandle_t pHandleEventGroup;
 static uint32_t frame_count = 0;
 static TickType_t last_fps_time = 0;
 static float actual_fps = 0.0f;
-// 性能分析
-static TickType_t perf_start, perf_mlx_read, perf_compute, perf_render, perf_lcd;
 
-// 简化版渲染任务 - 显示真实的MLX90640热成像数据
+// 图像缓冲区 - 参考render_task.c的优化
+static int16_t* TermoImage16 = NULL;  // 热成像整数缓冲区（温度*10）
+static int16_t* TermoHqImage16 = NULL; // 高质量插值后的图像
+static float* gaussBuff = NULL;        // 高斯模糊缓冲区
+static tRGBcolor* pPaletteImage = NULL;  // 伪彩色调色板
+
+// 简化版渲染任务 - 使用render_task的图像优化方法
 void render_task(void* arg)
 {
     TickType_t perf_start, perf_mlx_read, perf_compute, perf_render, perf_lcd;
     
     printf("Render task started for thermal imaging display\n");
+    
+    // 分配图像缓冲区 - 参考render_task.c
+    const int pixelCount = THERMALIMAGE_RESOLUTION_WIDTH * THERMALIMAGE_RESOLUTION_HEIGHT;
+    const uint16_t hq_img_width = 192;   // 热成像显示宽度
+    const uint16_t hq_img_height = 160;  // 热成像显示高度
+    
+    TermoImage16 = heap_caps_malloc(pixelCount * sizeof(int16_t), MALLOC_CAP_8BIT);
+    TermoHqImage16 = heap_caps_malloc((hq_img_width * hq_img_height) * sizeof(int16_t), MALLOC_CAP_8BIT);
+    gaussBuff = heap_caps_malloc(((THERMALIMAGE_RESOLUTION_WIDTH * 2) * (THERMALIMAGE_RESOLUTION_HEIGHT * 2)) * sizeof(float), MALLOC_CAP_8BIT);
+    pPaletteImage = heap_caps_malloc((MAX_TEMP - MIN_TEMP) * TEMP_SCALE * sizeof(tRGBcolor), MALLOC_CAP_8BIT);
+    
+    if (!TermoImage16 || !TermoHqImage16 || !gaussBuff || !pPaletteImage) {
+        printf("Failed to allocate image buffers!\n");
+        vTaskDelete(NULL);
+        return;
+    }
+    
+    printf("Image buffers allocated successfully\n");
     
     // 等待MLX90640初始化完成
     vTaskDelay(2000 / portTICK_PERIOD_MS);
@@ -111,68 +160,45 @@ void render_task(void* arg)
             if (tempRange < 0.001f) {
                 tempRange = 1.0f; // 避免除零与极小范围
             }
+            
+            // 生成伪彩色调色板 - 参考render_task.c的RedrawPalette
+            uint16_t paletteSteps = (uint16_t)(tempRange * TEMP_SCALE);
+            if (paletteSteps == 0) paletteSteps = 1;
+            getPalette(settingsParms.ColorScale, paletteSteps, pPaletteImage);
+            
+            // 将温度转换为整数数组 - 参考render_task.c
+            const int pixelCount = THERMALIMAGE_RESOLUTION_WIDTH * THERMALIMAGE_RESOLUTION_HEIGHT;
+            for (int i = 0; i < pixelCount; i++) {
+                TermoImage16[i] = (int16_t)(frame->ThermoImage[i] * TEMP_SCALE);
+            }
+            
             perf_compute = xTaskGetTickCount();
 
-            // 清屏 - 只清除需要的区域，而不是整个屏幕
-            // st7789_FillRect(0, 0, 240, 240, BLACK);  // 旧的全屏清除
-            
-            // 清除标题区域
-            st7789_FillRect(0, 0, 240, 40, BLACK);
-            // 清除热成像图像区域
-            int image_width = THERMALIMAGE_RESOLUTION_WIDTH * 6;
-            int image_height = THERMALIMAGE_RESOLUTION_HEIGHT * 6;
-            int image_start_x = (240 - image_width) / 2;
-            st7789_FillRect(image_start_x, 50, image_width, image_height, BLACK);
-            // 清除底部信息区域
-            st7789_FillRect(0, 200, 240, 40, BLACK);
+            // 清除文字显示区域，避免重叠
+            dispcolor_FillRect(0, 0, 240, 45, BLACK);      // 顶部标题区域
+            dispcolor_FillRect(0, 205, 240, 35, BLACK);    // 底部信息区域
             
             // 显示标题
             dispcolor_DrawString(10, 10, FONTID_24F, (uint8_t*)"ESP32S3 Thermal Camera", WHITE);
             
-            // 渲染热成像图像到显示屏 - 优化版本，直接操作像素
-            int scale = 6; // 每个像素放大6倍 (32*6 = 192, 24*6 = 144)
-            int start_x = (240 - THERMALIMAGE_RESOLUTION_WIDTH * scale) / 2;
-            int start_y = 50;
+            // 使用高斯模糊+双线性插值优化 - 参考render_task.c的HQ3X_2X模式
+            // 计算热成像显示区域 (留出顶部45和底部35像素)
+            const uint16_t img_y_start = 45;
+            const uint16_t img_height = 205 - 45;  // 160像素高度
+            const uint16_t img_width = 192;        // 保持32x24的宽高比 (160*32/24≈213，取192居中)
+            const uint16_t img_x_start = (240 - img_width) / 2;  // 居中显示
             
-            for (int y = 0; y < THERMALIMAGE_RESOLUTION_HEIGHT; y++) {
-                for (int x = 0; x < THERMALIMAGE_RESOLUTION_WIDTH; x++) {
-                    int index = y * THERMALIMAGE_RESOLUTION_WIDTH + x;
-                    float temp = frame->ThermoImage[index];
-
-                    // 温度到颜色的映射 (简单的热力图)
-                    uint16_t color;
-                    if (!isfinite(temp)) {
-                        color = BLACK;
-                    } else {
-                        float normalized = (temp - minTemp) / tempRange;
-                        if (normalized < 0.0f) {
-                            normalized = 0.0f;
-                        } else if (normalized > 1.0f) {
-                            normalized = 1.0f;
-                        }
-
-                        if (normalized < 0.25f) {
-                            color = BLUE; // 冷 - 蓝色
-                        } else if (normalized < 0.5f) {
-                            color = GREEN; // 温 - 绿色
-                        } else if (normalized < 0.75f) {
-                            color = YELLOW; // 热 - 黄色
-                        } else {
-                            color = RED; // 很热 - 红色
-                        }
-                    }
-                    
-                    // 优化: 直接使用DrawPixel绘制放大的像素块
-                    // 这比FillRect快得多，因为避免了重复的边界检查
-                    for (int dy = 0; dy < scale; dy++) {
-                        for (int dx = 0; dx < scale; dx++) {
-                            dispcolor_DrawPixel(start_x + x * scale + dx, 
-                                              start_y + y * scale + dy, color);
-                        }
-                    }
-                }
-            }
-            TickType_t perf_render = xTaskGetTickCount();
+            // 步骤1: 高斯模糊2倍放大
+            idwGauss(TermoImage16, THERMALIMAGE_RESOLUTION_WIDTH, THERMALIMAGE_RESOLUTION_HEIGHT, 2, gaussBuff);
+            
+            // 步骤2: 双线性插值到指定区域
+            idwBilinear(gaussBuff, THERMALIMAGE_RESOLUTION_WIDTH * 2, THERMALIMAGE_RESOLUTION_HEIGHT * 2, 
+                       TermoHqImage16, img_width, img_height, 10 / 2);
+            
+            // 步骤3: 绘制高质量图像到指定区域
+            DrawHQImage(TermoHqImage16, pPaletteImage, paletteSteps, img_x_start, img_y_start, 
+                       img_width, img_height, minTemp);
+            perf_render = xTaskGetTickCount();
             
             // 显示温度范围信息和帧率
             dispcolor_printf(10, 210, FONTID_16F, WHITE, "Min:%.1fC Max:%.1fC", minTemp, maxTemp);
@@ -202,7 +228,7 @@ void render_task(void* arg)
             }
         }
         
-        // 短暂延时
-        vTaskDelay(50 / portTICK_PERIOD_MS);
+        // 不需要额外延迟，xEventGroupWaitBits已经会等待新数据
+        // vTaskDelay(50 / portTICK_PERIOD_MS);  // 移除：这个延迟导致FPS被限制
     }
 }

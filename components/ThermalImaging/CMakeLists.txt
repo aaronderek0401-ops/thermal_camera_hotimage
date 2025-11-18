@@ -32,6 +32,12 @@ set(iic_srcs
     "src/iic/MLX90640_I2C_Driver.c"
 )
 
-idf_component_register(SRCS "${ThermalImaging_srcs}" "${lcd_srcs}" "${task_srcs}" "${iic_srcs}"
+set(interpolation_srcs
+    "src/interpolation/palette.c"
+    "src/interpolation/Bilinear.c"
+    "src/interpolation/Gauss.c"
+)
+
+idf_component_register(SRCS "${ThermalImaging_srcs}" "${lcd_srcs}" "${task_srcs}" "${iic_srcs}" "${interpolation_srcs}"
                        INCLUDE_DIRS "include" "include/lcd" "include/tasks" "include/tools" "include/iic"
                        REQUIRES driver spi_flash nvs_flash esp_wifi)
