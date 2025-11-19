@@ -67,6 +67,7 @@ typedef enum {
     Rainbow2,
     BlueRed,
     BlackNWhite,
+    AccuracyMode,
     COLOR_MAX, // 放在最后
 } eColorScale;
 

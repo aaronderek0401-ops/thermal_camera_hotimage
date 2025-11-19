@@ -200,10 +200,12 @@ void render_task(void* arg)
     
     printf("Render task started for thermal imaging display\n");
     
-    // 分配图像缓冲区 - 参考render_task.c
+    // 分配图像缓冲区 - 使用屏幕尺寸和上下栏高度保持一致
     const int pixelCount = THERMALIMAGE_RESOLUTION_WIDTH * THERMALIMAGE_RESOLUTION_HEIGHT;
-    const uint16_t hq_img_width = 192;   // 热成像显示宽度
-    const uint16_t hq_img_height = 160;  // 热成像显示高度
+    const uint16_t top_bar_h = 20;   // 顶部标题栏高度（pixels）
+    const uint16_t bottom_bar_h = 55; // 底部信息栏高度（pixels）
+    const uint16_t hq_img_width = dispcolor_getWidth() - 20;   // 热成像显示宽度（与屏幕宽度一致）
+    const uint16_t hq_img_height = dispcolor_getHeight() - top_bar_h - bottom_bar_h;  // 可用显示高度
     
     TermoImage16 = heap_caps_malloc(pixelCount * sizeof(int16_t), MALLOC_CAP_8BIT);
     TermoHqImage16 = heap_caps_malloc((hq_img_width * hq_img_height) * sizeof(int16_t), MALLOC_CAP_8BIT);
@@ -287,19 +289,27 @@ void render_task(void* arg)
             
             perf_compute = xTaskGetTickCount();
 
-            // 清除文字显示区域，避免重叠
-            dispcolor_FillRect(0, 0, 240, 45, BLACK);      // 顶部标题区域
-            dispcolor_FillRect(0, 205, 240, 35, BLACK);    // 底部信息区域
-            
-            // 显示标题
-            dispcolor_DrawString(10, 10, FONTID_24F, (uint8_t*)"ESP32S3 Thermal Camera", WHITE);
-            
+            // 清除文字显示区域，避免重叠（使用屏幕尺寸而不是魔法数字）
+            dispcolor_FillRect(0, 0, dispcolor_getWidth(), top_bar_h, BLACK);      // 顶部标题区域
+            dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);    // 底部信息区域
+
+            // 显示标题（根据字体高度垂直居中）
+            uint8_t* pTitleFont = font_GetFontStruct(FONTID_16F, 'A');
+            uint8_t titleFontH = font_GetCharHeight(pTitleFont);
+            int16_t title_y = (int16_t)((top_bar_h - titleFontH) / 2);
+            if (title_y < 0) title_y = 0;
+            // dispcolor_DrawString(10, title_y, FONTID_16F, (uint8_t*)"Thermal Camera", WHITE);
+            int16_t title_x = dispcolor_getStrWidth(FONTID_16F, "BOM_FRUIT");
+            title_x = (dispcolor_getWidth() - title_x) / 2;
+            dispcolor_DrawString(title_x, title_y, FONTID_16F, (uint8_t*)"BOM_FRUIT", WHITE);
+
+
             // 使用高斯模糊+双线性插值优化 - 参考render_task.c的HQ3X_2X模式
-            // 计算热成像显示区域 (留出顶部45和底部35像素)
-            const uint16_t img_y_start = 45;
-            const uint16_t img_height = 205 - 45;  // 160像素高度
-            const uint16_t img_width = 192;        // 保持32x24的宽高比 (160*32/24≈213，取192居中)
-            const uint16_t img_x_start = (240 - img_width) / 2;  // 居中显示
+            // 计算热成像显示区域（留出顶部和底部栏）
+            const uint16_t img_y_start = top_bar_h;
+            const uint16_t img_height = hq_img_height;  // 可用像素高度
+            const uint16_t img_width = hq_img_width;
+            const uint16_t img_x_start = (dispcolor_getWidth() - img_width) / 2;  // 居中显示（通常为0）
             
             // 步骤1: 高斯模糊2倍放大
             idwGauss(TermoImage16, THERMALIMAGE_RESOLUTION_WIDTH, THERMALIMAGE_RESOLUTION_HEIGHT, 2, gaussBuff);
@@ -318,21 +328,30 @@ void render_task(void* arg)
                 DrawCenterTemp(img_x_start, img_y_start, img_width, img_height, frame->CenterTemp);
                 
                 // 标记最大最小点
-                DrawMarkersHQ(frame, img_x_start, img_y_start, img_width, img_height);
+                // DrawMarkersHQ(frame, img_x_start, img_y_start, img_width, img_height);
             }
             
             perf_render = xTaskGetTickCount();
             
             // 显示温度范围信息和帧率
-            dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Max:%.1f%s Min:%.1f%s Ctr:%.1f%s", 
-                frame->maxT, CELSIUS_SYMBOL, frame->minT, CELSIUS_SYMBOL, frame->CenterTemp, CELSIUS_SYMBOL);
-            if (actual_fps > 0.0f) {
-                dispcolor_printf(10, 225, FONTID_16F, WHITE, "Actual: %.1f FPS (Set: %.1f)", 
-                    actual_fps, FPS_RATES[settingsParms.MLX90640FPS]);
-            } else {
-                dispcolor_printf(10, 225, FONTID_16F, WHITE, "FPS: %.1f (measuring...)", 
-                    FPS_RATES[settingsParms.MLX90640FPS]);
-            }
+            // dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Max:%.1f%s Min:%.1f%s Ctr:%.1f%s", 
+            //     frame->maxT, CELSIUS_SYMBOL, frame->minT, CELSIUS_SYMBOL, frame->CenterTemp, CELSIUS_SYMBOL);
+            dispcolor_printf(10, 190, FONTID_6X8M, WHITE, "Max:%.1f%s", frame->maxT, CELSIUS_SYMBOL);
+            dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Min:%.1f%s", frame->minT, CELSIUS_SYMBOL);
+            dispcolor_printf(10, 230, FONTID_6X8M, WHITE, "Ctr:%.1f%s", frame->CenterTemp, CELSIUS_SYMBOL);
+
+            // if (actual_fps > 0.0f) {
+            //     dispcolor_printf(10, 205, FONTID_16F, WHITE, "Actual: %.1f FPS (Set: %.1f)", 
+            //         actual_fps, FPS_RATES[settingsParms.MLX90640FPS]);
+            // } 
+            // else {
+            //     dispcolor_printf(10, 225, FONTID_16F, WHITE, "FPS: %.1f (measuring...)", 
+            //         FPS_RATES[settingsParms.MLX90640FPS]);
+            // }
+            dispcolor_printf(170, 190, FONTID_6X8M, WHITE, "Atr:%.1fFPS", actual_fps);
+            dispcolor_printf(170, 230, FONTID_6X8M, WHITE, "Set:%.1fFPS", FPS_RATES[settingsParms.MLX90640FPS]);
+
+            dispcolor_DrawRectangle(75, 190, 165, 235, WHITE); // 边框
             
             // 更新显示
             st7789_update();

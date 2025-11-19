@@ -107,6 +107,8 @@ void getPalette(eColorScale palette, uint16_t steps, tRGBcolor* pBuff)
             { 84, 0, 180 }, // 紫罗兰
             { 0, 97, 211 }, // 蓝色
             { 0, 145, 72 }, // 绿色
+            { 128, 200, 20 }, // 绿-黄过渡色 (新增)
+
             { 207, 214, 0 }, // 黄色
             { 231, 108, 0 }, // 橙色
             { 193, 19, 33 }, // 红色
@@ -143,6 +145,23 @@ void getPalette(eColorScale palette, uint16_t steps, tRGBcolor* pBuff)
             { 0xFF, 0xFF, 0xFF }, // 白色
         };
         buildTwoColorPalette(steps, pBuff, KeyColors);
+    } break;
+
+    case AccuracyMode: {
+        // 精准模式
+        tRGBcolor KeyColors[] = {
+            {143,   0, 255}, // Violet
+            { 75,   0, 130}, // Indigo
+            {  0,   0, 255}, // Blue
+            {  0, 127, 255}, // Cyan
+            {  0, 255, 127}, // Spring Green
+            {  0, 255,   0}, // Green
+            {127, 255,   0}, // Chartreuse
+            {255, 255,   0}, // Yellow
+            {255, 127,   0}, // Orange
+            {255,   0,   0}, // Red
+        };
+        buildManyColorPalette(steps, pBuff, KeyColors, sizeof(KeyColors) / sizeof(tRGBcolor));
     } break;
 
     case COLOR_MAX:

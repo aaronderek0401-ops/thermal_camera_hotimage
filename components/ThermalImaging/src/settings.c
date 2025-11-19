@@ -18,7 +18,7 @@ structSettingsParms settingsParms = {
     minTempNew : SCALE_DEFAULT_MIN,
     maxTempNew : SCALE_DEFAULT_MAX,
     TempMarkers : 1,
-    ColorScale : Iron,
+    ColorScale : Rainbow,
     LcdBrightness : 50,
     FuncUp : Markers_OnOff,
     FuncCenter : Save_BMP16,
