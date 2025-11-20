@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <float.h>
 #include <stdbool.h>
+#include "simple_menu.h"
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
 
@@ -225,8 +226,11 @@ void render_task(void* arg)
     
     // 主循环
     while (1) {
-        // 等待MLX90640数据更新
-        EventBits_t uxBitsToWaitFor = RENDER_MLX90640_NO0 | RENDER_MLX90640_NO1;
+        // 等待MLX90640数据更新或按键（保留按键事件以便简单菜单）
+        EventBits_t uxBitsToWaitFor = RENDER_MLX90640_NO0 | RENDER_MLX90640_NO1 |
+                         RENDER_ShortPress_Up | RENDER_Hold_Up |
+                         RENDER_ShortPress_Center | RENDER_Hold_Center |
+                         RENDER_ShortPress_Down | RENDER_Hold_Down;
         EventBits_t bits = xEventGroupWaitBits(pHandleEventGroup, uxBitsToWaitFor, pdTRUE, pdFALSE, portMAX_DELAY);
         
         if ((bits & RENDER_MLX90640_NO0) == RENDER_MLX90640_NO0 || (bits & RENDER_MLX90640_NO1) == RENDER_MLX90640_NO1) {
@@ -371,6 +375,23 @@ void render_task(void* arg)
             }
         }
         
+        // 如果等待返回的是按键事件（没有 MLX 帧位），处理按键
+        if ((bits & (RENDER_ShortPress_Up | RENDER_Hold_Up | RENDER_ShortPress_Center | RENDER_Hold_Center | RENDER_ShortPress_Down | RENDER_Hold_Down)) != 0) {
+            if ((bits & RENDER_ShortPress_Center) == RENDER_ShortPress_Center) {
+                // 短按 Center：简单响应（这里什么也不做或可扩展）
+                menu_run_simple();
+                settings_write_all();
+                dispcolor_ClearScreen();
+            }
+            if ((bits & RENDER_Hold_Center) == RENDER_Hold_Center) {
+                // Center 长按：进入简易菜单
+                // menu_run_simple();
+                // settings_write_all();
+                // dispcolor_ClearScreen();
+            }
+            // Up/Down short/hold 可在新菜单中被处理；这里保持空实现
+        }
+
         // 不需要额外延迟，xEventGroupWaitBits已经会等待新数据
         // vTaskDelay(50 / portTICK_PERIOD_MS);  // 移除：这个延迟导致FPS被限制
     }

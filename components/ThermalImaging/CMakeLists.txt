@@ -2,6 +2,8 @@ set(ThermalImaging_srcs
     "src/console.c"   
     "src/func.c"
     "src/menu.c"
+    "src/simple_menu.c"
+    # "src/save.c"
     "src/messagebox.c"
     "src/settings.c"
     "src/sleep.c"
