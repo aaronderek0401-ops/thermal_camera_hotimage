@@ -23,6 +23,7 @@ structSettingsParms settingsParms = {
     FuncUp : Markers_OnOff,
     FuncCenter : Save_BMP16,
     FuncDown : Scale_Prev,
+    RealTimeAnalysis : 1, // 默认开启实时数据分析显示
 };
 
 // 设置存储 初始化
@@ -223,6 +224,11 @@ int settings_read_all(void)
     if (err != ESP_OK)
         return err;
 
+    // 实时数据分析显示开关（如果第一次没有该键，保持默认值）
+    err = setting_read("RealTimeAnalysis", uint8, &settingsParms.RealTimeAnalysis);
+    if (err != ESP_OK)
+        return err;
+
     return 0;
 }
 
@@ -286,6 +292,11 @@ int settings_write_all(void)
         return err;
 
     err = setting_write("FuncDown", uint8, &settingsParms.FuncDown);
+    if (err != ESP_OK)
+        return err;
+
+    // 实时数据分析显示开关
+    err = setting_write("RealTimeAnalysis", uint8, &settingsParms.RealTimeAnalysis);
     if (err != ESP_OK)
         return err;
 

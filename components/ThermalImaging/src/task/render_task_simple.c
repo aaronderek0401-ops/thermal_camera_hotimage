@@ -338,20 +338,10 @@ void render_task(void* arg)
             perf_render = xTaskGetTickCount();
             
             // 显示温度范围信息和帧率
-            // dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Max:%.1f%s Min:%.1f%s Ctr:%.1f%s", 
-            //     frame->maxT, CELSIUS_SYMBOL, frame->minT, CELSIUS_SYMBOL, frame->CenterTemp, CELSIUS_SYMBOL);
             dispcolor_printf(10, 190, FONTID_6X8M, WHITE, "Max:%.1f%s", frame->maxT, CELSIUS_SYMBOL);
             dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Min:%.1f%s", frame->minT, CELSIUS_SYMBOL);
             dispcolor_printf(10, 230, FONTID_6X8M, WHITE, "Ctr:%.1f%s", frame->CenterTemp, CELSIUS_SYMBOL);
 
-            // if (actual_fps > 0.0f) {
-            //     dispcolor_printf(10, 205, FONTID_16F, WHITE, "Actual: %.1f FPS (Set: %.1f)", 
-            //         actual_fps, FPS_RATES[settingsParms.MLX90640FPS]);
-            // } 
-            // else {
-            //     dispcolor_printf(10, 225, FONTID_16F, WHITE, "FPS: %.1f (measuring...)", 
-            //         FPS_RATES[settingsParms.MLX90640FPS]);
-            // }
             dispcolor_printf(170, 190, FONTID_6X8M, WHITE, "Atr:%.1fFPS", actual_fps);
             dispcolor_printf(170, 230, FONTID_6X8M, WHITE, "Set:%.1fFPS", FPS_RATES[settingsParms.MLX90640FPS]);
 

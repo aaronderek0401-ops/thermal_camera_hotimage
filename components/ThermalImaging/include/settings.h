@@ -87,6 +87,7 @@ typedef struct
     eButtonFunc FuncUp; // 按钮Up 类型
     eButtonFunc FuncCenter; // 按钮Center 类型
     eButtonFunc FuncDown; // 按钮Down 类型
+    uint8_t RealTimeAnalysis; // 是否显示热成像实时界面下方的数据分析
 } structSettingsParms;
 
 extern structSettingsParms settingsParms;
