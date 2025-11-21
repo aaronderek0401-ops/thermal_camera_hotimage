@@ -12,6 +12,7 @@
 #include "simple_menu.h"
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
+#define FAHRENHEIT_SYMBOL "°F"  // 华氏度符号
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
 {
@@ -94,10 +95,19 @@ static void CalcTempFromMLX90640(sMlxData* pMlxData)
 }
 
 // 绘制中心温度显示 - 参考render_task.c
-static void DrawCenterTempColor(uint16_t cX, uint16_t cY, float Temp, uint16_t color)
+static void DrawCenterTempColor(uint16_t cX, uint16_t cY, float TempCelsius, uint16_t color, bool useFahrenheit)
 {
     char str[32];
-    sprintf(str, "%.1f%s", Temp, CELSIUS_SYMBOL);
+    float displayTemp = TempCelsius;
+    const char* unitSymbol = CELSIUS_SYMBOL;
+    
+    // 如果使用华氏度，进行转换
+    if (useFahrenheit) {
+        displayTemp = TempCelsius * 9.0f / 5.0f + 32.0f;
+        unitSymbol = FAHRENHEIT_SYMBOL;
+    }
+    
+    sprintf(str, "%.1f%s", displayTemp, unitSymbol);
     
     int16_t strWidth = strlen(str) * 6;  // FONTID_6X8M字体宽度
     int16_t strHeight = 8;
@@ -105,15 +115,15 @@ static void DrawCenterTempColor(uint16_t cX, uint16_t cY, float Temp, uint16_t c
     dispcolor_printf(cX - (strWidth >> 1), cY - (strHeight >> 1), FONTID_6X8M, color, "%s", str);
 }
 
-static void DrawCenterTemp(uint16_t X, uint16_t Y, uint16_t Width, uint16_t Height, float CenterTemp)
+static void DrawCenterTemp(uint16_t X, uint16_t Y, uint16_t Width, uint16_t Height, float CenterTemp, bool useFahrenheit)
 {
     uint16_t cX = (Width >> 1) + X;
     uint16_t cY = (Height >> 1) + Y;
 
     // 渲染阴影黑色
-    DrawCenterTempColor(cX + 1, cY + 1, CenterTemp, BLACK);
+    DrawCenterTempColor(cX + 1, cY + 1, CenterTemp, BLACK, useFahrenheit);
     // 渲染白色
-    DrawCenterTempColor(cX, cY, CenterTemp, WHITE);
+    DrawCenterTempColor(cX, cY, CenterTemp, WHITE, useFahrenheit);
 }
 
 // 绘制最大最小温度标记 - 参考render_task.c的DrawMarkersHQ
@@ -225,6 +235,9 @@ static data_sub_selection_t currentDataSubSelection = DATA_SUB_LEFT;
 
 // 图像区域十字线显示状态
 static bool showImageCrosshair = false;
+
+// 温度单位：true为华氏度，false为摄氏度
+static bool useFahrenheit = false;
 
 static void DrawSectionFocus(focus_section_t focus,
                              uint16_t top_bar_h,
@@ -376,9 +389,13 @@ void render_task(void* arg)
                 }
             }
             
+            // 右侧显示温度单位指示
+            const char* tempUnitText = useFahrenheit ? FAHRENHEIT_SYMBOL : CELSIUS_SYMBOL;
+            int16_t tempUnitWidth = dispcolor_getStrWidth(FONTID_16F, tempUnitText);
+            
             dispcolor_DrawString(title_x, title_y, FONTID_16F, (uint8_t*)"BOM_FRUIT", centerTitleColor);
             dispcolor_DrawString(10, title_y, FONTID_16F, (uint8_t*)"BOM", leftTitleColor);
-            dispcolor_DrawString(230-title_x2, title_y, FONTID_16F, (uint8_t*)"BOM", rightTitleColor);
+            dispcolor_DrawString(230-tempUnitWidth, title_y, FONTID_16F, (uint8_t*)tempUnitText, rightTitleColor);
 
 
             // 使用高斯模糊+双线性插值优化 - 参考render_task.c的HQ3X_2X模式
@@ -401,8 +418,8 @@ void render_task(void* arg)
             
             // 热图上的最大/最小标记和中心温度 - 参考render_task.c
             if (settingsParms.TempMarkers) {
-                // 在屏幕中央显示温度
-                DrawCenterTemp(img_x_start, img_y_start, img_width, img_height, frame->CenterTemp);
+                // 在屏幕中央显示温度（使用当前选择的温度单位）
+                DrawCenterTemp(img_x_start, img_y_start, img_width, img_height, frame->CenterTemp, useFahrenheit);
                 
                 // 标记最大最小点
                 // DrawMarkersHQ(frame, img_x_start, img_y_start, img_width, img_height);
@@ -475,6 +492,17 @@ void render_task(void* arg)
         
         // 如果等待返回的是按键事件（没有 MLX 帧位），处理按键
         if ((bits & (RENDER_ShortPress_Up | RENDER_Hold_Up | RENDER_ShortPress_Center | RENDER_Hold_Center | RENDER_ShortPress_Down | RENDER_Hold_Down)) != 0) {
+            // 检查是否同时短按上下键且选中标题右侧项（温度单位转换键）
+            bool isTempUnitToggle = (currentFocus == SECTION_TITLE && 
+                                     currentTitleSubSelection == TITLE_SUB_RIGHT &&
+                                     (bits & RENDER_ShortPress_Up) == RENDER_ShortPress_Up &&
+                                     (bits & RENDER_ShortPress_Down) == RENDER_ShortPress_Down);
+            
+            // 处理同时短按上下键：切换温度单位
+            if (isTempUnitToggle) {
+                useFahrenheit = !useFahrenheit;
+            }
+            
             // 处理长按上下键：当焦点在标题区域时，用于左右切换子项
             if (currentFocus == SECTION_TITLE) {
                 if ((bits & RENDER_Hold_Up) == RENDER_Hold_Up) {
@@ -511,8 +539,8 @@ void render_task(void* arg)
                 }
             }
             
-            // 处理短按上下键：在三个主要区域之间切换
-            if ((bits & RENDER_ShortPress_Up) == RENDER_ShortPress_Up) {
+            // 处理单独短按上下键：在三个主要区域之间切换（排除同时短按的情况）
+            if (!isTempUnitToggle && (bits & RENDER_ShortPress_Up) == RENDER_ShortPress_Up) {
                 currentFocus = (currentFocus == 0) ? (SECTION_COUNT - 1) : (currentFocus - 1);
                 // 切换到其他区域时，重置子选择
                 if (currentFocus != SECTION_TITLE) {
@@ -523,7 +551,7 @@ void render_task(void* arg)
                 }
                 // 切换到其他区域时，不自动隐藏十字线（保持状态）
             }
-            if ((bits & RENDER_ShortPress_Down) == RENDER_ShortPress_Down) {
+            if (!isTempUnitToggle && (bits & RENDER_ShortPress_Down) == RENDER_ShortPress_Down) {
                 currentFocus = (currentFocus + 1) % SECTION_COUNT;
                 // 切换到其他区域时，重置子选择
                 if (currentFocus != SECTION_TITLE) {
