@@ -9,7 +9,7 @@
 
 //
 #define MIN_TEMPSCALE_DELTA 10 // 最小温标增量
-#define SCALE_DEFAULT_MIN 10 // 默认最小刻度温度
+#define SCALE_DEFAULT_MIN 20 // 默认最小刻度温度
 #define SCALE_DEFAULT_MAX 50 // 默认最大刻度温度
 
 // 背光设置
