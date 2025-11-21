@@ -12,7 +12,9 @@
 #include "simple_menu.h"
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
-#define FAHRENHEIT_SYMBOL "°F"  // 华氏度符号
+// 华氏度符号 - 使用与CELSIUS_SYMBOL相同的编码方式（Windows-1251）
+// 直接使用度符号字符（确保文件以Windows-1251编码保存）
+#define FAHRENHEIT_SYMBOL "\xB0""F"
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
 {
