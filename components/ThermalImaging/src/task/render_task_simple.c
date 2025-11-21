@@ -194,6 +194,34 @@ static int16_t* TermoHqImage16 = NULL; // 高质量插值后的图像
 static float* gaussBuff = NULL;        // 高斯模糊缓冲区
 static tRGBcolor* pPaletteImage = NULL;  // 伪彩色调色板
 
+typedef enum {
+    SECTION_TITLE = 0,
+    SECTION_IMAGE,
+    SECTION_DATA,
+    SECTION_COUNT
+} focus_section_t;
+
+static focus_section_t currentFocus = SECTION_IMAGE;
+
+static void DrawSectionFocus(focus_section_t focus,
+                             uint16_t top_bar_h,
+                             uint16_t bottom_bar_h,
+                             uint16_t img_y_start,
+                             uint16_t img_height)
+{
+    const int16_t xPos = 8;
+    int16_t yPos[SECTION_COUNT];
+    yPos[SECTION_TITLE] = top_bar_h / 2;
+    yPos[SECTION_IMAGE] = img_y_start + (img_height / 2);
+    yPos[SECTION_DATA] = dispcolor_getHeight() - (bottom_bar_h / 2);
+
+    // for (int i = 0; i < SECTION_COUNT; i++) {
+    //     dispcolor_DrawCircleFilled(xPos, yPos[i], 4, BLACK);
+    // }
+
+    dispcolor_DrawCircleFilled(xPos, yPos[focus], 4, RGB565(255, 255, 0));
+}
+
 // 简化版渲染任务 - 使用render_task的图像优化方法
 void render_task(void* arg)
 {
@@ -296,6 +324,8 @@ void render_task(void* arg)
             // 清除文字显示区域，避免重叠（使用屏幕尺寸而不是魔法数字）
             dispcolor_FillRect(0, 0, dispcolor_getWidth(), top_bar_h, BLACK);      // 顶部标题区域
             dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);    // 底部信息区域
+            dispcolor_FillRect(0, 20, 10, 165, BLACK);      // 热成像左侧区域
+
 
             // 显示标题（根据字体高度垂直居中）
             uint8_t* pTitleFont = font_GetFontStruct(FONTID_16F, 'A');
@@ -337,15 +367,22 @@ void render_task(void* arg)
             
             perf_render = xTaskGetTickCount();
             
-            // 显示温度范围信息和帧率
-            dispcolor_printf(10, 190, FONTID_6X8M, WHITE, "Max:%.1f%s", frame->maxT, CELSIUS_SYMBOL);
-            dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Min:%.1f%s", frame->minT, CELSIUS_SYMBOL);
-            dispcolor_printf(10, 230, FONTID_6X8M, WHITE, "Ctr:%.1f%s", frame->CenterTemp, CELSIUS_SYMBOL);
+            if (settingsParms.RealTimeAnalysis) {
+                // 显示温度范围信息和帧率
+                dispcolor_printf(10, 190, FONTID_6X8M, WHITE, "Max:%.1f%s", frame->maxT, CELSIUS_SYMBOL);
+                dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Min:%.1f%s", frame->minT, CELSIUS_SYMBOL);
+                dispcolor_printf(10, 230, FONTID_6X8M, WHITE, "Ctr:%.1f%s", frame->CenterTemp, CELSIUS_SYMBOL);
 
-            dispcolor_printf(170, 190, FONTID_6X8M, WHITE, "Atr:%.1fFPS", actual_fps);
-            dispcolor_printf(170, 230, FONTID_6X8M, WHITE, "Set:%.1fFPS", FPS_RATES[settingsParms.MLX90640FPS]);
+                dispcolor_printf(170, 190, FONTID_6X8M, WHITE, "Atr:%.1fFPS", actual_fps);
+                dispcolor_printf(170, 230, FONTID_6X8M, WHITE, "Set:%.1fFPS", FPS_RATES[settingsParms.MLX90640FPS]);
 
-            dispcolor_DrawRectangle(75, 190, 165, 235, WHITE); // 边框
+                dispcolor_DrawRectangle(75, 190, 165, 235, WHITE); // 边框
+            } else {
+                // 清除底部区域避免残留旧数据
+                dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);
+            }
+
+            DrawSectionFocus(currentFocus, top_bar_h, bottom_bar_h, img_y_start, img_height);
             
             // 更新显示
             st7789_update();
@@ -367,8 +404,14 @@ void render_task(void* arg)
         
         // 如果等待返回的是按键事件（没有 MLX 帧位），处理按键
         if ((bits & (RENDER_ShortPress_Up | RENDER_Hold_Up | RENDER_ShortPress_Center | RENDER_Hold_Center | RENDER_ShortPress_Down | RENDER_Hold_Down)) != 0) {
+            if ((bits & (RENDER_ShortPress_Up | RENDER_Hold_Up)) != 0) {
+                currentFocus = (currentFocus == 0) ? (SECTION_COUNT - 1) : (currentFocus - 1);
+            }
+            if ((bits & (RENDER_ShortPress_Down | RENDER_Hold_Down)) != 0) {
+                currentFocus = (currentFocus + 1) % SECTION_COUNT;
+            }
             if ((bits & RENDER_ShortPress_Center) == RENDER_ShortPress_Center) {
-                // 短按 Center：简单响应（这里什么也不做或可扩展）
+                // 短按 Center：进入简易菜单
                 menu_run_simple();
                 settings_write_all();
                 dispcolor_ClearScreen();
@@ -379,7 +422,7 @@ void render_task(void* arg)
                 // settings_write_all();
                 // dispcolor_ClearScreen();
             }
-            // Up/Down short/hold 可在新菜单中被处理；这里保持空实现
+            // Up/Down 事件当前仅用于焦点切换，后续功能可在此扩展
         }
 
         // 不需要额外延迟，xEventGroupWaitBits已经会等待新数据

@@ -71,11 +71,23 @@ int menu_run_simple(void)
         }
 
         for (int i = 0; i < MENU_ITEMS_COUNT; i++) {
-            uint16_t color = (i == selected) ? RGB565(10,200,100) : BLACK;
             int16_t y0 = item_top + i * item_height;
             int16_t y1 = y0 + item_height - 6;
-            dispcolor_DrawRectangleFilled(item_left, y0, item_right, y1, color);
-            dispcolor_printf(item_left + 8, y0 + 6, FONTID_6X8M, (i == selected) ? BLACK : WHITE, "%s", labels[i]);
+            // 背景统一为黑色
+            dispcolor_DrawRectangleFilled(item_left, y0, item_right, y1, BLACK);
+
+            int16_t dot_x = item_left - 12;
+            int16_t dot_y = y0 + (y1 - y0) / 2;
+            if (i == selected) {
+                uint16_t dotColor = RGB565(255, 255, 0);
+                dispcolor_DrawCircleFilled(dot_x, dot_y, 4, dotColor);
+            } else {
+                // 清除任何旧的点
+                dispcolor_DrawRectangleFilled(dot_x - 5, dot_y - 5, dot_x + 5, dot_y + 5, BLACK);
+            }
+
+            // 文本
+            dispcolor_printf(item_left + 8, y0 + 6, FONTID_6X8M, WHITE, "%s", labels[i]);
         }
         dispcolor_Update();
 
