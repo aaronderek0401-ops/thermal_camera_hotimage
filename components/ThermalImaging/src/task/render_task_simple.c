@@ -203,6 +203,29 @@ typedef enum {
 
 static focus_section_t currentFocus = SECTION_IMAGE;
 
+// 标题区域的子选择（左、中、右三项）
+typedef enum {
+    TITLE_SUB_LEFT = 0,   // 左侧：BOM
+    TITLE_SUB_CENTER,     // 中间：BOM_FRUIT
+    TITLE_SUB_RIGHT,      // 右侧：BOM
+    TITLE_SUB_COUNT
+} title_sub_selection_t;
+
+static title_sub_selection_t currentTitleSubSelection = TITLE_SUB_LEFT;
+
+// 底部数据区域的子选择（左、中、右三项）
+typedef enum {
+    DATA_SUB_LEFT = 0,   // 左侧：Max/Min/Ctr温度
+    DATA_SUB_CENTER,     // 中间：边框区域
+    DATA_SUB_RIGHT,      // 右侧：Atr/Set FPS
+    DATA_SUB_COUNT
+} data_sub_selection_t;
+
+static data_sub_selection_t currentDataSubSelection = DATA_SUB_LEFT;
+
+// 图像区域十字线显示状态
+static bool showImageCrosshair = false;
+
 static void DrawSectionFocus(focus_section_t focus,
                              uint16_t top_bar_h,
                              uint16_t bottom_bar_h,
@@ -334,8 +357,28 @@ void render_task(void* arg)
             if (title_y < 0) title_y = 0;
             // dispcolor_DrawString(10, title_y, FONTID_16F, (uint8_t*)"Thermal Camera", WHITE);
             int16_t title_x = dispcolor_getStrWidth(FONTID_16F, "BOM_FRUIT");
+            int16_t title_x2 = dispcolor_getStrWidth(FONTID_16F, "BOM");
+
             title_x = (dispcolor_getWidth() - title_x) / 2;
-            dispcolor_DrawString(title_x, title_y, FONTID_16F, (uint8_t*)"BOM_FRUIT", WHITE);
+            
+            // 确定各标题项的颜色（如果焦点在标题区域，高亮当前选中的子项）
+            uint16_t leftTitleColor = WHITE;
+            uint16_t centerTitleColor = WHITE;
+            uint16_t rightTitleColor = WHITE;
+            
+            if (currentFocus == SECTION_TITLE) {
+                if (currentTitleSubSelection == TITLE_SUB_LEFT) {
+                    leftTitleColor = RGB565(0, 200, 255); // 蓝色高亮
+                } else if (currentTitleSubSelection == TITLE_SUB_CENTER) {
+                    centerTitleColor = RGB565(0, 200, 255); // 蓝色高亮
+                } else if (currentTitleSubSelection == TITLE_SUB_RIGHT) {
+                    rightTitleColor = RGB565(0, 200, 255); // 蓝色高亮
+                }
+            }
+            
+            dispcolor_DrawString(title_x, title_y, FONTID_16F, (uint8_t*)"BOM_FRUIT", centerTitleColor);
+            dispcolor_DrawString(10, title_y, FONTID_16F, (uint8_t*)"BOM", leftTitleColor);
+            dispcolor_DrawString(230-title_x2, title_y, FONTID_16F, (uint8_t*)"BOM", rightTitleColor);
 
 
             // 使用高斯模糊+双线性插值优化 - 参考render_task.c的HQ3X_2X模式
@@ -365,18 +408,46 @@ void render_task(void* arg)
                 // DrawMarkersHQ(frame, img_x_start, img_y_start, img_width, img_height);
             }
             
+            // 绘制十字线（如果启用）
+            if (showImageCrosshair) {
+                // 计算图像中心位置
+                uint16_t center_x = img_x_start + (img_width / 2);
+                uint16_t center_y = img_y_start + (img_height / 2);
+                
+                // 绘制水平十字线（贯穿整个图像宽度）
+                dispcolor_DrawLine(img_x_start, center_y, img_x_start + img_width - 1, center_y, WHITE);
+                
+                // 绘制垂直十字线（贯穿整个图像高度）
+                dispcolor_DrawLine(center_x, img_y_start, center_x, img_y_start + img_height - 1, WHITE);
+            }
+            
             perf_render = xTaskGetTickCount();
             
             if (settingsParms.RealTimeAnalysis) {
                 // 显示温度范围信息和帧率
-                dispcolor_printf(10, 190, FONTID_6X8M, WHITE, "Max:%.1f%s", frame->maxT, CELSIUS_SYMBOL);
-                dispcolor_printf(10, 210, FONTID_6X8M, WHITE, "Min:%.1f%s", frame->minT, CELSIUS_SYMBOL);
-                dispcolor_printf(10, 230, FONTID_6X8M, WHITE, "Ctr:%.1f%s", frame->CenterTemp, CELSIUS_SYMBOL);
+                uint16_t leftColor = WHITE;
+                uint16_t centerColor = WHITE;
+                uint16_t rightColor = WHITE;
+                
+                // 如果焦点在底部数据区域，高亮当前选中的子项
+                if (currentFocus == SECTION_DATA) {
+                    if (currentDataSubSelection == DATA_SUB_LEFT) {
+                        leftColor = RGB565(0, 200, 255); // 蓝色高亮
+                    } else if (currentDataSubSelection == DATA_SUB_CENTER) {
+                        centerColor = RGB565(0, 200, 255); // 蓝色高亮
+                    } else if (currentDataSubSelection == DATA_SUB_RIGHT) {
+                        rightColor = RGB565(0, 200, 255); // 蓝色高亮
+                    }
+                }
+                
+                dispcolor_printf(10, 190, FONTID_6X8M, leftColor, "Max:%.1f%s", frame->maxT, CELSIUS_SYMBOL);
+                dispcolor_printf(10, 210, FONTID_6X8M, leftColor, "Min:%.1f%s", frame->minT, CELSIUS_SYMBOL);
+                dispcolor_printf(10, 230, FONTID_6X8M, leftColor, "Ctr:%.1f%s", frame->CenterTemp, CELSIUS_SYMBOL);
 
-                dispcolor_printf(170, 190, FONTID_6X8M, WHITE, "Atr:%.1fFPS", actual_fps);
-                dispcolor_printf(170, 230, FONTID_6X8M, WHITE, "Set:%.1fFPS", FPS_RATES[settingsParms.MLX90640FPS]);
+                dispcolor_printf(170, 190, FONTID_6X8M, rightColor, "Atr:%.1fFPS", actual_fps);
+                dispcolor_printf(170, 230, FONTID_6X8M, rightColor, "Set:%.1fFPS", FPS_RATES[settingsParms.MLX90640FPS]);
 
-                dispcolor_DrawRectangle(75, 190, 165, 235, WHITE); // 边框
+                dispcolor_DrawRectangle(75, 190, 165, 235, centerColor); // 边框
             } else {
                 // 清除底部区域避免残留旧数据
                 dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);
@@ -404,12 +475,66 @@ void render_task(void* arg)
         
         // 如果等待返回的是按键事件（没有 MLX 帧位），处理按键
         if ((bits & (RENDER_ShortPress_Up | RENDER_Hold_Up | RENDER_ShortPress_Center | RENDER_Hold_Center | RENDER_ShortPress_Down | RENDER_Hold_Down)) != 0) {
-            if ((bits & (RENDER_ShortPress_Up | RENDER_Hold_Up)) != 0) {
+            // 处理长按上下键：当焦点在标题区域时，用于左右切换子项
+            if (currentFocus == SECTION_TITLE) {
+                if ((bits & RENDER_Hold_Up) == RENDER_Hold_Up) {
+                    // 长按上键：向左切换（或循环到最右）
+                    currentTitleSubSelection = (currentTitleSubSelection == 0) ? (TITLE_SUB_COUNT - 1) : (currentTitleSubSelection - 1);
+                }
+                if ((bits & RENDER_Hold_Down) == RENDER_Hold_Down) {
+                    // 长按下键：向右切换
+                    currentTitleSubSelection = (currentTitleSubSelection + 1) % TITLE_SUB_COUNT;
+                }
+            }
+            
+            // 处理长按上下键：当焦点在图像区域时，用于显示/隐藏十字线
+            if (currentFocus == SECTION_IMAGE) {
+                if ((bits & RENDER_Hold_Up) == RENDER_Hold_Up) {
+                    // 长按上键：去除十字线
+                    showImageCrosshair = false;
+                }
+                if ((bits & RENDER_Hold_Down) == RENDER_Hold_Down) {
+                    // 长按下键：显示十字线
+                    showImageCrosshair = true;
+                }
+            }
+            
+            // 处理长按上下键：当焦点在底部数据区域时，用于左右切换子项
+            if (currentFocus == SECTION_DATA) {
+                if ((bits & RENDER_Hold_Up) == RENDER_Hold_Up) {
+                    // 长按上键：向左切换（或循环到最右）
+                    currentDataSubSelection = (currentDataSubSelection == 0) ? (DATA_SUB_COUNT - 1) : (currentDataSubSelection - 1);
+                }
+                if ((bits & RENDER_Hold_Down) == RENDER_Hold_Down) {
+                    // 长按下键：向右切换
+                    currentDataSubSelection = (currentDataSubSelection + 1) % DATA_SUB_COUNT;
+                }
+            }
+            
+            // 处理短按上下键：在三个主要区域之间切换
+            if ((bits & RENDER_ShortPress_Up) == RENDER_ShortPress_Up) {
                 currentFocus = (currentFocus == 0) ? (SECTION_COUNT - 1) : (currentFocus - 1);
+                // 切换到其他区域时，重置子选择
+                if (currentFocus != SECTION_TITLE) {
+                    currentTitleSubSelection = TITLE_SUB_LEFT;
+                }
+                if (currentFocus != SECTION_DATA) {
+                    currentDataSubSelection = DATA_SUB_LEFT;
+                }
+                // 切换到其他区域时，不自动隐藏十字线（保持状态）
             }
-            if ((bits & (RENDER_ShortPress_Down | RENDER_Hold_Down)) != 0) {
+            if ((bits & RENDER_ShortPress_Down) == RENDER_ShortPress_Down) {
                 currentFocus = (currentFocus + 1) % SECTION_COUNT;
+                // 切换到其他区域时，重置子选择
+                if (currentFocus != SECTION_TITLE) {
+                    currentTitleSubSelection = TITLE_SUB_LEFT;
+                }
+                if (currentFocus != SECTION_DATA) {
+                    currentDataSubSelection = DATA_SUB_LEFT;
+                }
+                // 切换到其他区域时，不自动隐藏十字线（保持状态）
             }
+            
             if ((bits & RENDER_ShortPress_Center) == RENDER_ShortPress_Center) {
                 // 短按 Center：进入简易菜单
                 menu_run_simple();
@@ -422,7 +547,6 @@ void render_task(void* arg)
                 // settings_write_all();
                 // dispcolor_ClearScreen();
             }
-            // Up/Down 事件当前仅用于焦点切换，后续功能可在此扩展
         }
 
         // 不需要额外延迟，xEventGroupWaitBits已经会等待新数据

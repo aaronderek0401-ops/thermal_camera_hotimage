@@ -9,7 +9,7 @@
 #define BUTTON_DOWN_PIN 36
 
 //
-#define LONG_PRESS_STAGE1 8 // 单位100ms
+#define LONG_PRESS_STAGE1 10 // 单位100ms
 #define LONG_PRESS_STAGE2 50 // 单位100ms
 #define STAGE2_ACCELERATION 4
 
