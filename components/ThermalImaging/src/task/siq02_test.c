@@ -2,6 +2,7 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include <stdio.h>
+#include <math.h>
 
 // SIQ-02FVS3 旋转编码器测试
 // - EC_A / EC_B 采用数字正交解码
@@ -20,6 +21,10 @@
 #define ENC_SAMPLE_PERIOD_MS 2
 #define ENC_STEPS_PER_DETENT 4 // 4 次状态变化视为一次有效旋转
 #define ENC_CENTER_IDLE_TICKS 50 // ~100ms 无变化即回到 CENTER
+// Detents per full revolution (adjust to your encoder)
+#ifndef ENC_DETENTS_PER_REV
+#define ENC_DETENTS_PER_REV 20
+#endif
 
 static const int8_t s_quadrature_table[16] = {
     0, -1, +1, 0,
@@ -55,10 +60,15 @@ void siq02_task(void *arg)
     int accum = 0;
     int current_dir = 0; // -1=LEFT, +1=RIGHT, 0=CENTER
     int idle_ticks = 0;
+    int position = 0; // detent count
 
     bool last_press = (gpio_get_level(ENC_GPIO_SW) == 0);
-    printf("Wheel: DIR=%s | PRESS=%s\n",
-           dir_to_string(current_dir), last_press ? "DOWN" : "UP");
+    {
+        double deg = fmod((double)position * (360.0 / (double)ENC_DETENTS_PER_REV), 360.0);
+        if (deg < 0) deg += 360.0;
+        printf("Wheel: DIR=%s | PRESS=%s | accum=%d | pos=%d | angle=%.1f deg\n",
+               dir_to_string(current_dir), last_press ? "DOWN" : "UP", accum, position, deg);
+    }
 
     while (1) {
         uint8_t curr_state = ((gpio_get_level(ENC_GPIO_A) & 1) << 1) |
@@ -74,10 +84,12 @@ void siq02_task(void *arg)
             if (accum >= ENC_STEPS_PER_DETENT) {
                 current_dir = +1;
                 accum = 0;
+                position += current_dir;
                 dir_changed = true;
             } else if (accum <= -ENC_STEPS_PER_DETENT) {
                 current_dir = -1;
                 accum = 0;
+                position += current_dir;
                 dir_changed = true;
             }
         } else {
@@ -95,8 +107,10 @@ void siq02_task(void *arg)
         }
 
         if (dir_changed || press_changed) {
-            printf("Wheel: DIR=%s | PRESS=%s\n",
-                   dir_to_string(current_dir), pressed ? "DOWN" : "UP");
+            double deg = fmod((double)position * (360.0 / (double)ENC_DETENTS_PER_REV), 360.0);
+            if (deg < 0) deg += 360.0;
+            printf("Wheel: DIR=%s | PRESS=%s | accum=%d | pos=%d | angle=%.1f deg\n",
+                   dir_to_string(current_dir), pressed ? "DOWN" : "UP", accum, position, deg);
         }
 
         TickType_t delay_ticks = pdMS_TO_TICKS(ENC_SAMPLE_PERIOD_MS);
