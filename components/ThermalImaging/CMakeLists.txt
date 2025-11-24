@@ -14,6 +14,7 @@ set(task_srcs
     "src/task/render_task_simple.c" 
     "src/task/buttons_task.c"
     "src/task/wheel_task.c"
+    "src/task/siq02_test.c"
     "src/task/mlx90640_task.c"
 )
 
