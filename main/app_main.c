@@ -41,6 +41,9 @@ void app_main()
     xTaskCreatePinnedToCore(buttons_task, "buttons", 1024, NULL, 6, NULL, tskNO_AFFINITY);
     xTaskCreatePinnedToCore(mlx90640_task, "mlx90640", 1024 * 10, NULL, 4, NULL, 0);
 
+    // 启动 Wheel (IO17) ADC 测试任务（打印 ADC2 CH6 的 raw 与 mV）
+    extern void start_wheel_task(void);
+    start_wheel_task();
     while (1) {
         vTaskDelay(60 * 1000 / portTICK_PERIOD_MS);
         // printf("Internal Memory: %d K\r\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024 / 8);

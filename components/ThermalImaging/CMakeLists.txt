@@ -13,6 +13,7 @@ set(ThermalImaging_srcs
 set(task_srcs
     "src/task/render_task_simple.c" 
     "src/task/buttons_task.c"
+    "src/task/wheel_task.c"
     "src/task/mlx90640_task.c"
 )
 
@@ -42,4 +43,4 @@ set(interpolation_srcs
 
 idf_component_register(SRCS "${ThermalImaging_srcs}" "${lcd_srcs}" "${task_srcs}" "${iic_srcs}" "${interpolation_srcs}"
                        INCLUDE_DIRS "include" "include/lcd" "include/tasks" "include/tools" "include/iic"
-                       REQUIRES driver spi_flash nvs_flash esp_wifi)
+                       REQUIRES driver esp_adc spi_flash nvs_flash esp_wifi)
