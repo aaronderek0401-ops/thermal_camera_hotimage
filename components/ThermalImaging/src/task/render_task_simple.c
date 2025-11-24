@@ -168,53 +168,49 @@ static void DrawHQImage(int16_t* pImage, tRGBcolor* pPalette, uint16_t PaletteSi
 {
     int cnt = 0;
 
+    // Precompute values used for mapping to avoid per-pixel repeated work
+    int16_t minS = (int16_t)(minTemp * TEMP_SCALE);
+    int16_t maxS = (int16_t)(maxTemp * TEMP_SCALE);
+    int paletteMid = PaletteSize / 2;
+    int pc = settingsParms.PaletteCenterPercent; // 0..100
+    int16_t centerS = (int16_t)((minTemp + (pc / 100.0f) * (maxTemp - minTemp)) * TEMP_SCALE);
+    int denomLower = centerS - minS; // may be <=0
+    int denomUpper = maxS - centerS; // may be <=0
+
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
-            int16_t pixel = pImage[cnt];
-            cnt++;
+            int16_t pixel = pImage[cnt++];
 
-            // Default linear mapping (fallback)
-            int16_t minS = (int16_t)(minTemp * TEMP_SCALE);
-            int16_t maxS = (int16_t)(maxTemp * TEMP_SCALE);
-
-            int idx = 0;
-
-            // Compute palette center temperature (scaled)
-            int paletteMid = PaletteSize / 2;
-            int pc = settingsParms.PaletteCenterPercent; // 0..100
-            int16_t centerS = (int16_t)((minTemp + (pc / 100.0f) * (maxTemp - minTemp)) * TEMP_SCALE);
-
+            int idx;
             if (centerS <= minS || centerS >= maxS) {
                 // degenerate: fall back to linear mapping
-                idx = pixel - minS;
+                idx = (int)pixel - (int)minS;
             } else {
                 if (pixel <= centerS) {
                     // Map [minS .. centerS] -> [0 .. paletteMid]
-                    int denom = (centerS - minS);
-                    if (denom <= 0) {
+                    if (denomLower <= 0) {
                         idx = 0;
                     } else {
-                        idx = (int)((long)(pixel - minS) * (long)paletteMid / (long)denom);
+                        idx = ((int32_t)(pixel - minS) * paletteMid) / denomLower;
                     }
                 } else {
                     // Map (centerS .. maxS] -> (paletteMid .. PaletteSize-1]
-                    int denom = (maxS - centerS);
-                    if (denom <= 0) {
+                    if (denomUpper <= 0) {
                         idx = paletteMid;
                     } else {
-                        idx = paletteMid + (int)((long)(pixel - centerS) * (long)(PaletteSize - paletteMid) / (long)denom);
+                        idx = paletteMid + (((int32_t)(pixel - centerS) * (PaletteSize - paletteMid)) / denomUpper);
                     }
                 }
             }
 
             // Clamp
             if (idx < 0) idx = 0;
-            if (idx >= PaletteSize) idx = PaletteSize - 1;
+            if (idx >= (int)PaletteSize) idx = PaletteSize - 1;
 
             // Invert palette mapping so higher temperatures map to 'hot' colors
             int16_t invIdx = (int16_t)(PaletteSize - 1 - idx);
             if (invIdx < 0) invIdx = 0;
-            if (invIdx >= PaletteSize) invIdx = PaletteSize - 1;
+            if (invIdx >= (int)PaletteSize) invIdx = PaletteSize - 1;
 
             uint16_t color = RGB565(pPalette[invIdx].r, pPalette[invIdx].g, pPalette[invIdx].b);
             dispcolor_DrawPixel((width - col - 1) + X, row + Y, color);
