@@ -21,6 +21,7 @@ typedef enum {
     MENU_OPEN_CAMERA = 0,
     MENU_AUTO_SCALE,
     MENU_SET_MIN_TEMP,
+    MENU_SET_PALETTE_CENTER,
     MENU_SET_MAX_TEMP,
     MENU_PALETTE_NEXT,
     MENU_REALTIME_ANALYSIS,
@@ -63,6 +64,9 @@ int menu_run_simple(void)
                 break;
             case MENU_SET_MIN_TEMP:
                 snprintf(labels[i], sizeof(labels[i]), "Min Temp: %.1f%s", settingsParms.minTempNew, CELSIUS_SYMBOL);
+                break;
+            case MENU_SET_PALETTE_CENTER:
+                snprintf(labels[i], sizeof(labels[i]), "Palette Center: %d%%", settingsParms.PaletteCenterPercent);
                 break;
             case MENU_SET_MAX_TEMP:
                 snprintf(labels[i], sizeof(labels[i]), "Max Temp: %.1f%s", settingsParms.maxTempNew, CELSIUS_SYMBOL);
@@ -162,6 +166,39 @@ int menu_run_simple(void)
                         // confirmation
                         dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
                         dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "Min temp set: %.1f%s", v, CELSIUS_SYMBOL);
+                        dispcolor_Update();
+                        vTaskDelay(600 / portTICK_PERIOD_MS);
+                        done = true;
+                    }
+                    if (bits2 & RENDER_Hold_Center) {
+                        done = true; // cancel
+                    }
+                }
+            } break;
+            case MENU_SET_PALETTE_CENTER: {
+                // Interactive adjust loop for palette center percent (0-100)
+                uint8_t v = settingsParms.PaletteCenterPercent;
+                bool done = false;
+                while (!done) {
+                    dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
+                    dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Palette Center: %d%%", v);
+                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Up/Down to change, Center save");
+                    dispcolor_Update();
+
+                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_ShortPress_Up | RENDER_ShortPress_Down | RENDER_ShortPress_Center | RENDER_Hold_Center, pdTRUE, pdFALSE, portMAX_DELAY);
+                    if (bits2 & RENDER_ShortPress_Up) {
+                        if (v < 100) v++;
+                    }
+                    if (bits2 & RENDER_ShortPress_Down) {
+                        if (v > 0) v--;
+                    }
+
+                    if (bits2 & RENDER_ShortPress_Center) {
+                        settingsParms.PaletteCenterPercent = v;
+                        settings_write_all();
+                        // confirmation
+                        dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
+                        dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "Palette center set: %d%%", v);
                         dispcolor_Update();
                         vTaskDelay(600 / portTICK_PERIOD_MS);
                         done = true;

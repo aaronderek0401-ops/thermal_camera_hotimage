@@ -10,11 +10,10 @@
 #include <float.h>
 #include <stdbool.h>
 #include "simple_menu.h"
+#include "settings.h"
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
-// 华氏度符号 - 使用与CELSIUS_SYMBOL相同的编码方式（Windows-1251）
-// 直接使用度符号字符（确保文件以Windows-1251编码保存）
-#define FAHRENHEIT_SYMBOL "\xB0""F"
+
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
 {
@@ -165,23 +164,55 @@ static void DrawMarkersHQ(sMlxData* pMlxData, uint16_t img_x, uint16_t img_y, ui
 
 // 高质量图像绘制函数 - 参考render_task.c的DrawHQImage
 static void DrawHQImage(int16_t* pImage, tRGBcolor* pPalette, uint16_t PaletteSize, 
-                       uint16_t X, uint16_t Y, uint16_t width, uint16_t height, float minTemp)
+                       uint16_t X, uint16_t Y, uint16_t width, uint16_t height, float minTemp, float maxTemp)
 {
     int cnt = 0;
 
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
-            int16_t colorIdx = pImage[cnt] - (int16_t)(minTemp * TEMP_SCALE);
+            int16_t pixel = pImage[cnt];
             cnt++;
 
-            if (colorIdx < 0) {
-                colorIdx = 0;
-            } else if (colorIdx >= PaletteSize) {
-                colorIdx = PaletteSize - 1;
+            // Default linear mapping (fallback)
+            int16_t minS = (int16_t)(minTemp * TEMP_SCALE);
+            int16_t maxS = (int16_t)(maxTemp * TEMP_SCALE);
+
+            int idx = 0;
+
+            // Compute palette center temperature (scaled)
+            int paletteMid = PaletteSize / 2;
+            int pc = settingsParms.PaletteCenterPercent; // 0..100
+            int16_t centerS = (int16_t)((minTemp + (pc / 100.0f) * (maxTemp - minTemp)) * TEMP_SCALE);
+
+            if (centerS <= minS || centerS >= maxS) {
+                // degenerate: fall back to linear mapping
+                idx = pixel - minS;
+            } else {
+                if (pixel <= centerS) {
+                    // Map [minS .. centerS] -> [0 .. paletteMid]
+                    int denom = (centerS - minS);
+                    if (denom <= 0) {
+                        idx = 0;
+                    } else {
+                        idx = (int)((long)(pixel - minS) * (long)paletteMid / (long)denom);
+                    }
+                } else {
+                    // Map (centerS .. maxS] -> (paletteMid .. PaletteSize-1]
+                    int denom = (maxS - centerS);
+                    if (denom <= 0) {
+                        idx = paletteMid;
+                    } else {
+                        idx = paletteMid + (int)((long)(pixel - centerS) * (long)(PaletteSize - paletteMid) / (long)denom);
+                    }
+                }
             }
 
+            // Clamp
+            if (idx < 0) idx = 0;
+            if (idx >= PaletteSize) idx = PaletteSize - 1;
+
             // Invert palette mapping so higher temperatures map to 'hot' colors
-            int16_t invIdx = (int16_t)(PaletteSize - 1 - colorIdx);
+            int16_t invIdx = (int16_t)(PaletteSize - 1 - idx);
             if (invIdx < 0) invIdx = 0;
             if (invIdx >= PaletteSize) invIdx = PaletteSize - 1;
 
@@ -260,7 +291,7 @@ static void DrawSectionFocus(focus_section_t focus,
     dispcolor_DrawCircleFilled(xPos, yPos[focus], 4, RGB565(255, 255, 0));
 }
 
-// 简化版渲染任务 - 使用render_task的图像优化方法
+// 渲染任务 - 使用render_task的图像优化方法
 void render_task(void* arg)
 {
     TickType_t perf_start, perf_mlx_read, perf_compute, perf_render, perf_lcd;
@@ -416,7 +447,7 @@ void render_task(void* arg)
             
             // 步骤3: 绘制高质量图像到指定区域
             DrawHQImage(TermoHqImage16, pPaletteImage, paletteSteps, img_x_start, img_y_start, 
-                       img_width, img_height, minTemp);
+                       img_width, img_height, minTemp, maxTemp);
             
             // 热图上的最大/最小标记和中心温度 - 参考render_task.c
             if (settingsParms.TempMarkers) {

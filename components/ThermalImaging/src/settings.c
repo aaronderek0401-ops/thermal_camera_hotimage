@@ -17,13 +17,13 @@ structSettingsParms settingsParms = {
     AutoScaleMode : 1,
     minTempNew : SCALE_DEFAULT_MIN,
     maxTempNew : SCALE_DEFAULT_MAX,
+    PaletteCenterPercent : PALETTE_CENTER_DEFAULT,
     TempMarkers : 1,
-    ColorScale : Rainbow,
+    ColorScale : AccuracyMode,
     LcdBrightness : 50,
     FuncUp : Markers_OnOff,
     FuncCenter : Save_BMP16,
     FuncDown : Scale_Prev,
-    RealTimeAnalysis : 1, // 默认开启实时数据分析显示
 };
 
 // 设置存储 初始化
@@ -200,6 +200,10 @@ int settings_read_all(void)
     if (err != ESP_OK)
         return err;
 
+    err = setting_read("PaletteCenterPercent", uint8, &settingsParms.PaletteCenterPercent);
+    if (err != ESP_OK)
+        return err;
+
     err = setting_read("TempMarkers", uint8, &settingsParms.TempMarkers);
     if (err != ESP_OK)
         return err;
@@ -221,11 +225,6 @@ int settings_read_all(void)
         return err;
 
     err = setting_read("FuncDown", uint8, &settingsParms.FuncDown);
-    if (err != ESP_OK)
-        return err;
-
-    // 实时数据分析显示开关（如果第一次没有该键，保持默认值）
-    err = setting_read("RealTimeAnalysis", uint8, &settingsParms.RealTimeAnalysis);
     if (err != ESP_OK)
         return err;
 
@@ -271,6 +270,10 @@ int settings_write_all(void)
     if (err != ESP_OK)
         return err;
 
+    err = setting_write("PaletteCenterPercent", uint8, &settingsParms.PaletteCenterPercent);
+    if (err != ESP_OK)
+        return err;
+
     err = setting_write("TempMarkers", uint8, &settingsParms.TempMarkers);
     if (err != ESP_OK)
         return err;
@@ -292,11 +295,6 @@ int settings_write_all(void)
         return err;
 
     err = setting_write("FuncDown", uint8, &settingsParms.FuncDown);
-    if (err != ESP_OK)
-        return err;
-
-    // 实时数据分析显示开关
-    err = setting_write("RealTimeAnalysis", uint8, &settingsParms.RealTimeAnalysis);
     if (err != ESP_OK)
         return err;
 

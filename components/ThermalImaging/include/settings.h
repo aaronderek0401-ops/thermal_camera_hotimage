@@ -11,6 +11,8 @@
 #define MIN_TEMPSCALE_DELTA 10 // 最小温标增量
 #define SCALE_DEFAULT_MIN 20 // 默认最小刻度温度
 #define SCALE_DEFAULT_MAX 50 // 默认最大刻度温度
+// 调色板中心位置默认百分比（50 == 中间）
+#define PALETTE_CENTER_DEFAULT 50
 
 // 背光设置
 #define BRIGHTNESS_STEP 5 // 背光每次递加递减数量
@@ -83,6 +85,7 @@ typedef struct
     float maxTempNew; // 最大温度
     uint8_t TempMarkers; // 显示最大 最小温度标记
     eColorScale ColorScale; // 伪彩色
+    uint8_t PaletteCenterPercent; // 调色板 50% 对应的温度在 min..max 中的位置，0-100
     int LcdBrightness; // LCD 背光亮度
     eButtonFunc FuncUp; // 按钮Up 类型
     eButtonFunc FuncCenter; // 按钮Center 类型
