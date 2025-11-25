@@ -270,6 +270,9 @@ static bool subItemMode = false;
 // 调色板选择模式：true表示当前正在用编码器调整调色板
 static bool paletteSelectMode = false;
 
+// 温度单位选择模式：true表示当前正在用编码器切换温度单位
+static bool tempUnitSelectMode = false;
+
 // 图像区域十字线显示状态
 static bool showImageCrosshair = false;
 
@@ -577,20 +580,26 @@ void render_task(void* arg)
         // SIQ02: 子项模式下左右切换子项, 非子项模式下上下切换焦点区域
         // 特殊: 在palette子项时右拨进入调色板选择模式，编码器调整调色板
         
-        // Wheel 右拨：进入子项选择模式，或从子项模式进入菜单/调色板选择
+        // Wheel 右拨：进入子项选择模式，或从子项模式进入菜单/调色板选择/温度单位选择
         if (bits & RENDER_Wheel_Confirm) {
             if (paletteSelectMode) {
                 // 在调色板选择模式，右拨确认并退出
                 settings_write_all();
                 paletteSelectMode = false;
+            } else if (tempUnitSelectMode) {
+                // 在温度单位选择模式，右拨确认并退出
+                tempUnitSelectMode = false;
             } else if (!subItemMode) {
                 // 进入子项选择模式
                 subItemMode = true;
             } else {
                 // 已在子项模式
-                if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
+                if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_LEFT) {
                     // 在palette子项，进入调色板选择模式
                     paletteSelectMode = true;
+                } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
+                    // 在温度单位子项，进入温度单位选择模式
+                    tempUnitSelectMode = true;
                 } else {
                     // 其他子项，进入菜单
                     menu_run_simple();
@@ -606,6 +615,8 @@ void render_task(void* arg)
             if (paletteSelectMode) {
                 settings_write_all();
                 paletteSelectMode = false;
+            } else if (tempUnitSelectMode) {
+                tempUnitSelectMode = false;
             } else {
                 menu_run_simple();
                 settings_write_all();
@@ -614,11 +625,14 @@ void render_task(void* arg)
             }
         }
         
-        // Wheel 左拨：退出调色板选择/子项模式，返回焦点区域切换
+        // Wheel 左拨：退出调色板选择/温度单位选择/子项模式，返回焦点区域切换
         if (bits & RENDER_Wheel_Back) {
             if (paletteSelectMode) {
                 // 退出调色板选择模式（不保存）
                 paletteSelectMode = false;
+            } else if (tempUnitSelectMode) {
+                // 退出温度单位选择模式
+                tempUnitSelectMode = false;
             } else if (subItemMode) {
                 subItemMode = false;
             } else {
@@ -636,6 +650,9 @@ void render_task(void* arg)
                 } else {
                     settingsParms.ColorScale--;
                 }
+            } else if (tempUnitSelectMode) {
+                // 温度单位选择模式：切换温度单位
+                useFahrenheit = !useFahrenheit;
             } else if (subItemMode) {
                 // 子项模式：向左切换子项
                 if (currentFocus == SECTION_TITLE) {
@@ -655,6 +672,9 @@ void render_task(void* arg)
             if (paletteSelectMode) {
                 // 调色板选择模式：切换到下一个调色板
                 settingsParms.ColorScale = (settingsParms.ColorScale + 1) % COLOR_MAX;
+            } else if (tempUnitSelectMode) {
+                // 温度单位选择模式：切换温度单位
+                useFahrenheit = !useFahrenheit;
             } else if (subItemMode) {
                 // 子项模式：向右切换子项
                 if (currentFocus == SECTION_TITLE) {
