@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include "simple_menu.h"
 #include "settings.h"
+#include "wheel.h"
+#include "siq02.h"
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
 //test on DELL
@@ -317,6 +319,11 @@ void render_task(void* arg)
     
     // 等待MLX90640初始化完成
     vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+    // Register wheel/encoder callbacks so they behave like the existing button bits
+    // (If wheel/siq02 tasks are not started elsewhere, make sure to start them.)
+    wheel_register_callback(s_wheel_to_render_cb);
+    siq02_register_callback(s_siq02_to_render_cb);
     
     // 主循环
     while (1) {
@@ -423,8 +430,9 @@ void render_task(void* arg)
             const char* tempUnitText = useFahrenheit ? FAHRENHEIT_SYMBOL : CELSIUS_SYMBOL;
             int16_t tempUnitWidth = dispcolor_getStrWidth(FONTID_16F, tempUnitText);
             
-            dispcolor_DrawString(title_x, title_y, FONTID_16F, (uint8_t*)"BOM_FRUIT", centerTitleColor);
-            dispcolor_DrawString(10, title_y, FONTID_16F, (uint8_t*)"BOM", leftTitleColor);
+            dispcolor_DrawString(title_x, title_y, FONTID_16F, (uint8_t*)"auto_save", centerTitleColor);
+            // Show palette index same as simple menu (less verbose)
+            dispcolor_printf(10, title_y, FONTID_16F, leftTitleColor, "Palette %d", settingsParms.ColorScale);
             dispcolor_DrawString(230-tempUnitWidth, title_y, FONTID_16F, (uint8_t*)tempUnitText, rightTitleColor);
 
 
@@ -487,14 +495,57 @@ void render_task(void* arg)
                     }
                 }
                 
-                dispcolor_printf(10, 190, FONTID_6X8M, leftColor, "Max:%.1f%s", frame->maxT, CELSIUS_SYMBOL);
-                dispcolor_printf(10, 210, FONTID_6X8M, leftColor, "Min:%.1f%s", frame->minT, CELSIUS_SYMBOL);
-                dispcolor_printf(10, 230, FONTID_6X8M, leftColor, "Ctr:%.1f%s", frame->CenterTemp, CELSIUS_SYMBOL);
+                // 左侧显示：overall-std / overall-max / overall-min / overall-avg
+                {
+                    int cntAll = THERMALIMAGE_RESOLUTION_WIDTH * THERMALIMAGE_RESOLUTION_HEIGHT;
+                    double sumall = 0.0;
+                    double sumsqall = 0.0;
+                    double omin = 1e30;
+                    double omax = -1e30;
+                    int valid = 0;
+                    for (int i = 0; i < cntAll; ++i) {
+                        float v = frame->ThermoImage[i];
+                        if (!isfinite(v)) continue;
+                        valid++;
+                        sumall += v;
+                        sumsqall += (double)v * (double)v;
+                        if (v < omin) omin = v;
+                        if (v > omax) omax = v;
+                    }
+                    double oavg = 0.0;
+                    double ostd = 0.0;
+                    if (valid > 0) {
+                        oavg = sumall / valid;
+                        double var = sumsqall / valid - oavg * oavg;
+                        if (var < 0) var = 0;
+                        ostd = sqrt(var);
+                    }
 
-                dispcolor_printf(170, 190, FONTID_6X8M, rightColor, "Atr:%.1fFPS", actual_fps);
-                dispcolor_printf(170, 230, FONTID_6X8M, rightColor, "Set:%.1fFPS", FPS_RATES[settingsParms.MLX90640FPS]);
+                    dispcolor_printf(10, 190, FONTID_6X8M, leftColor, "std:%.2f%s", (float)ostd, CELSIUS_SYMBOL);
+                    dispcolor_printf(10, 205, FONTID_6X8M, leftColor, "max:%.1f%s", (float)omax, CELSIUS_SYMBOL);
+                    dispcolor_printf(10, 220, FONTID_6X8M, leftColor, "min:%.1f%s", (float)omin, CELSIUS_SYMBOL);
+                    dispcolor_printf(10, 235, FONTID_6X8M, leftColor, "avg:%.2f%s", (float)oavg, CELSIUS_SYMBOL);
+                }
 
+                // 在中间边框内显示实际 FPS
                 dispcolor_DrawRectangle(75, 190, 165, 235, centerColor); // 边框
+                {
+                    char fpsStr[32];
+                    sprintf(fpsStr, "FPS:%.1f", actual_fps);
+                    int16_t strW = dispcolor_getStrWidth(FONTID_6X8M, fpsStr);
+                    int16_t rect_cx = (75 + 165) / 2;
+                    int16_t rect_cy = (190 + 235) / 2;
+                    dispcolor_printf(rect_cx - (strW >> 1), rect_cy - 4, FONTID_6X8M, centerColor, "%s", fpsStr);
+                }
+
+                // 右侧显示：是否自动刻度、上量程和下量程（使用当前显示范围）
+                if (settingsParms.AutoScaleMode) {
+                    dispcolor_printf(170, 190, FONTID_6X8M, rightColor, "Auto:ON");
+                } else {
+                    dispcolor_printf(170, 190, FONTID_6X8M, rightColor, "Auto:OFF");
+                }
+                dispcolor_printf(170, 210, FONTID_6X8M, rightColor, "Hi:%.1f", maxTemp);
+                dispcolor_printf(170, 230, FONTID_6X8M, rightColor, "Lo:%.1f", minTemp);
             } else {
                 // 清除底部区域避免残留旧数据
                 dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);
@@ -609,5 +660,44 @@ void render_task(void* arg)
 
         // 不需要额外延迟，xEventGroupWaitBits已经会等待新数据
         // vTaskDelay(50 / portTICK_PERIOD_MS);  // 移除：这个延迟导致FPS被限制
+    }
+}
+
+// ------------------------------------------------------------------
+// Adapter callbacks: convert wheel/siq02 events into render event bits
+// ------------------------------------------------------------------
+static void s_wheel_to_render_cb(wheel_event_t evt)
+{
+    if (pHandleEventGroup == NULL) return;
+    switch (evt) {
+    case WHEEL_EVENT_LEFT:
+        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Up);
+        break;
+    case WHEEL_EVENT_RIGHT:
+        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Down);
+        break;
+    case WHEEL_EVENT_PRESS:
+        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Center);
+        break;
+    default:
+        break;
+    }
+}
+
+static void s_siq02_to_render_cb(siq02_event_t evt)
+{
+    if (pHandleEventGroup == NULL) return;
+    switch (evt) {
+    case SIQ02_EVENT_LEFT:
+        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Up);
+        break;
+    case SIQ02_EVENT_RIGHT:
+        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Down);
+        break;
+    case SIQ02_EVENT_PRESS:
+        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Center);
+        break;
+    default:
+        break;
     }
 }
