@@ -1,13 +1,13 @@
+// 修改后：将旋钮封装为事件接口（LEFT/RIGHT/PRESS），支持队列与回调
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
+#include "siq02.h"
 #include <stdio.h>
 #include <math.h>
 
-// SIQ-02FVS3 旋转编码器测试
-// - EC_A / EC_B 采用数字正交解码
-// - 按键（SW）使用独立 GPIO（默认 GPIO8，低电平=按下）
-
+// 默认 GPIO（可在 siq02_init 中覆盖）
 #ifndef ENC_GPIO_A
 #define ENC_GPIO_A GPIO_NUM_17
 #endif
@@ -19,9 +19,8 @@
 #endif
 
 #define ENC_SAMPLE_PERIOD_MS 2
-#define ENC_STEPS_PER_DETENT 4 // 4 次状态变化视为一次有效旋转
-#define ENC_CENTER_IDLE_TICKS 50 // ~100ms 无变化即回到 CENTER
-// Detents per full revolution (adjust to your encoder)
+#define ENC_STEPS_PER_DETENT 4
+#define ENC_CENTER_IDLE_TICKS 50
 #ifndef ENC_DETENTS_PER_REV
 #define ENC_DETENTS_PER_REV 20
 #endif
@@ -33,51 +32,44 @@ static const int8_t s_quadrature_table[16] = {
     0, +1, -1, 0
 };
 
-static const char *dir_to_string(int dir)
-{
-    if (dir > 0) return "RIGHT";
-    if (dir < 0) return "LEFT";
-    return "CENTER";
-}
+// 内部状态
+static QueueHandle_t s_siq02_queue = NULL;
+static void (*s_siq02_callback)(siq02_event_t) = NULL;
+static gpio_num_t s_gpio_a = ENC_GPIO_A;
+static gpio_num_t s_gpio_b = ENC_GPIO_B;
+static gpio_num_t s_gpio_sw = ENC_GPIO_SW;
 
-void siq02_task(void *arg)
+static void siq02_task(void *arg)
 {
     gpio_config_t cfg = {
-        .pin_bit_mask = (1ULL << ENC_GPIO_A) |
-                        (1ULL << ENC_GPIO_B) |
-                        (1ULL << ENC_GPIO_SW),
+        .pin_bit_mask = (1ULL << (int)s_gpio_a) |
+                        (1ULL << (int)s_gpio_b) |
+                        (1ULL << (int)s_gpio_sw),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&cfg);
-    printf("siq02: Rotary encoder A=%d B=%d SW=%d (pull-up, low active)\n",
-           ENC_GPIO_A, ENC_GPIO_B, ENC_GPIO_SW);
 
-    uint8_t prev_state = ((gpio_get_level(ENC_GPIO_A) & 1) << 1) |
-                         (gpio_get_level(ENC_GPIO_B) & 1);
+    uint8_t prev_state = ((gpio_get_level(s_gpio_a) & 1) << 1) |
+                         (gpio_get_level(s_gpio_b) & 1);
     int accum = 0;
-    int current_dir = 0; // -1=LEFT, +1=RIGHT, 0=CENTER
+    int current_dir = 0;
     int idle_ticks = 0;
-    int position = 0; // detent count
+    int position = 0;
 
-    bool last_press = (gpio_get_level(ENC_GPIO_SW) == 0);
-    {
-        double deg = fmod((double)position * (360.0 / (double)ENC_DETENTS_PER_REV), 360.0);
-        if (deg < 0) deg += 360.0;
-        printf("Wheel: DIR=%s | PRESS=%s | accum=%d | pos=%d | angle=%.1f deg\n",
-               dir_to_string(current_dir), last_press ? "DOWN" : "UP", accum, position, deg);
-    }
+    bool last_press = (gpio_get_level(s_gpio_sw) == 0);
 
     while (1) {
-        uint8_t curr_state = ((gpio_get_level(ENC_GPIO_A) & 1) << 1) |
-                              (gpio_get_level(ENC_GPIO_B) & 1);
+        uint8_t curr_state = ((gpio_get_level(s_gpio_a) & 1) << 1) |
+                              (gpio_get_level(s_gpio_b) & 1);
         uint8_t idx = (prev_state << 2) | curr_state;
         int8_t delta = s_quadrature_table[idx & 0x0F];
         prev_state = curr_state;
 
-        bool dir_changed = false;
+        siq02_event_t evt = SIQ02_EVENT_NONE;
+
         if (delta != 0) {
             accum += delta;
             idle_ticks = 0;
@@ -85,32 +77,34 @@ void siq02_task(void *arg)
                 current_dir = +1;
                 accum = 0;
                 position += current_dir;
-                dir_changed = true;
+                evt = SIQ02_EVENT_RIGHT;
             } else if (accum <= -ENC_STEPS_PER_DETENT) {
                 current_dir = -1;
                 accum = 0;
                 position += current_dir;
-                dir_changed = true;
+                evt = SIQ02_EVENT_LEFT;
             }
         } else {
             if (idle_ticks < ENC_CENTER_IDLE_TICKS) idle_ticks++;
             if (idle_ticks >= ENC_CENTER_IDLE_TICKS && current_dir != 0) {
                 current_dir = 0;
-                dir_changed = true;
             }
         }
 
-        bool pressed = (gpio_get_level(ENC_GPIO_SW) == 0);
-        bool press_changed = (pressed != last_press);
-        if (press_changed) {
-            last_press = pressed;
+        bool pressed = (gpio_get_level(s_gpio_sw) == 0);
+        bool press_down = (!last_press && pressed);
+        last_press = pressed;
+        if (press_down) {
+            evt = SIQ02_EVENT_PRESS;
         }
 
-        if (dir_changed || press_changed) {
-            double deg = fmod((double)position * (360.0 / (double)ENC_DETENTS_PER_REV), 360.0);
-            if (deg < 0) deg += 360.0;
-            printf("Wheel: DIR=%s | PRESS=%s | accum=%d | pos=%d | angle=%.1f deg\n",
-                   dir_to_string(current_dir), pressed ? "DOWN" : "UP", accum, position, deg);
+        if (evt != SIQ02_EVENT_NONE) {
+            if (s_siq02_queue) {
+                xQueueSend(s_siq02_queue, &evt, 0);
+            }
+            if (s_siq02_callback) {
+                s_siq02_callback(evt);
+            }
         }
 
         TickType_t delay_ticks = pdMS_TO_TICKS(ENC_SAMPLE_PERIOD_MS);
@@ -119,8 +113,38 @@ void siq02_task(void *arg)
     }
 }
 
+esp_err_t siq02_init(gpio_num_t a, gpio_num_t b, gpio_num_t sw)
+{
+    s_gpio_a = (a == -1) ? ENC_GPIO_A : a;
+    s_gpio_b = (b == -1) ? ENC_GPIO_B : b;
+    s_gpio_sw = (sw == -1) ? ENC_GPIO_SW : sw;
+
+    if (s_siq02_queue == NULL) {
+        s_siq02_queue = xQueueCreate(8, sizeof(siq02_event_t));
+        if (s_siq02_queue == NULL) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    BaseType_t ok = xTaskCreate(siq02_task, "siq02", 2048, NULL, tskIDLE_PRIORITY + 2, NULL);
+    return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
+}
+
 void start_siq02_test(void)
 {
-    xTaskCreate(siq02_task, "siq02", 2048, NULL, tskIDLE_PRIORITY+2, NULL);
+    siq02_init(ENC_GPIO_A, ENC_GPIO_B, ENC_GPIO_SW);
 }
+
+BaseType_t siq02_get_event(siq02_event_t* out_evt, TickType_t ticks_to_wait)
+{
+    if (s_siq02_queue == NULL) return pdFALSE;
+    return xQueueReceive(s_siq02_queue, out_evt, ticks_to_wait);
+}
+
+void siq02_register_callback(void (*cb)(siq02_event_t))
+{
+    s_siq02_callback = cb;
+}
+
+
 

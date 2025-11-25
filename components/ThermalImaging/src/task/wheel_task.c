@@ -6,6 +6,37 @@
 #include "freertos/task.h"
 #include "esp_system.h"
 #include <stdio.h>
+#include "wheel.h"
+
+// wheel module internal queue & callback
+static QueueHandle_t s_wheel_queue = NULL;
+static void (*s_wheel_callback)(wheel_event_t) = NULL;
+
+BaseType_t wheel_post_event(wheel_event_t evt)
+{
+    if (s_wheel_queue == NULL) return pdFALSE;
+    return xQueueSend(s_wheel_queue, &evt, 0);
+}
+
+BaseType_t wheel_get_event(wheel_event_t* out_evt, TickType_t ticks_to_wait)
+{
+    if (s_wheel_queue == NULL) return pdFALSE;
+    return xQueueReceive(s_wheel_queue, out_evt, ticks_to_wait);
+}
+
+void wheel_register_callback(void (*cb)(wheel_event_t))
+{
+    s_wheel_callback = cb;
+}
+
+esp_err_t wheel_init(void)
+{
+    if (s_wheel_queue == NULL) {
+        s_wheel_queue = xQueueCreate(8, sizeof(wheel_event_t));
+        if (s_wheel_queue == NULL) return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
 
 // Wheel ADC 测试任务（原 adc_gpio17_test.c 重命名）
 // 只读取 ADC2 CH6（对应 IO17）并打印
@@ -85,6 +116,21 @@ void wheel_task(void *arg)
 
     // 只读取 ADC2 CH6（对应 IO17）并打印
     const adc_channel_t target_ch = ADC_CHANNEL_6; // CH6
+    // 电压阈值（mV）
+    const int V_LEFT = 1800;   // 左拨期望 ~1.8V
+    const int V_RIGHT = 1500;  // 右拨期望 ~1.5V
+    const int V_PRESS = 1000;  // 按下期望 ~1.0V
+    const int THRESH_HIGH = (V_LEFT + V_RIGHT) / 2; // 1650
+    const int THRESH_LOW = (V_RIGHT + V_PRESS) / 2; // 1250
+
+    wheel_event_t last_evt = WHEEL_EVENT_NONE;
+
+    // ensure module queue exists
+    if (s_wheel_queue == NULL) {
+        // best-effort init if caller didn't call wheel_init
+        wheel_init();
+    }
+
     while (1) {
         printf("--- ADC2 CH6 (IO17) reading ---\n");
         if (test_adc2_handle) {
@@ -99,6 +145,30 @@ void wheel_task(void *arg)
                         if (ret != ESP_OK) voltage_mv = -1;
                     }
                     printf("ADC2 CH6: raw=%d, mV=%d\n", raw, voltage_mv);
+
+                    // 根据 mV 值判定状态：LEFT / RIGHT / PRESS
+                    wheel_event_t detected = WHEEL_EVENT_NONE;
+                    if (voltage_mv >= THRESH_HIGH) {
+                        detected = WHEEL_EVENT_LEFT;
+                    } else if (voltage_mv >= THRESH_LOW) {
+                        detected = WHEEL_EVENT_RIGHT;
+                    } else if (voltage_mv >= 0) {
+                        // 低于 THRESH_LOW 视为按下（或其他低电平状态）
+                        detected = WHEEL_EVENT_PRESS;
+                    }
+
+                    // 仅在状态变化时发送/打印一次（避免重复刷屏）
+                    if (detected != WHEEL_EVENT_NONE && detected != last_evt) {
+                        const char *name = "NONE";
+                        if (detected == WHEEL_EVENT_LEFT) name = "LEFT";
+                        else if (detected == WHEEL_EVENT_RIGHT) name = "RIGHT";
+                        else if (detected == WHEEL_EVENT_PRESS) name = "PRESS";
+                        printf("Wheel detected: %s (mV=%d)\n", name, voltage_mv);
+                        // 发布到 wheel 自己的事件队列并调用回调（若已注册）
+                        wheel_post_event(detected);
+                        if (s_wheel_callback) s_wheel_callback(detected);
+                        last_evt = detected;
+                    }
                 } else {
                     printf("ADC2 CH6 read failed: %s\n", esp_err_to_name(r));
                 }
