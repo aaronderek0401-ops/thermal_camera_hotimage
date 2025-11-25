@@ -13,6 +13,7 @@
 #include "settings.h"
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
+//test on DELL
 
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
