@@ -264,6 +264,9 @@ typedef enum {
 
 static data_sub_selection_t currentDataSubSelection = DATA_SUB_LEFT;
 
+// 子项选择模式：true表示当前在子项中左右选择，false表示在焦点区域间切换
+static bool subItemMode = false;
+
 // 图像区域十字线显示状态
 static bool showImageCrosshair = false;
 
@@ -321,11 +324,12 @@ void render_task(void* arg)
 
     // 主循环
     while (1) {
-        // 等待MLX90640数据更新或按键（保留按键事件以便简单菜单）
+        // 等待MLX90640数据更新或输入事件
+        // Wheel: 左拨=返回, 右拨/按下=确认进入菜单
+        // SIQ02: 左转=向上, 右转=向下, 按下=确认
         EventBits_t uxBitsToWaitFor = RENDER_MLX90640_NO0 | RENDER_MLX90640_NO1 |
-                         RENDER_ShortPress_Up | RENDER_Hold_Up |
-                         RENDER_ShortPress_Center | RENDER_Hold_Center |
-                         RENDER_ShortPress_Down | RENDER_Hold_Down;
+                         RENDER_Wheel_Back | RENDER_Wheel_Confirm | RENDER_Wheel_Press |
+                         RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Encoder_Press;
         EventBits_t bits = xEventGroupWaitBits(pHandleEventGroup, uxBitsToWaitFor, pdTRUE, pdFALSE, portMAX_DELAY);
         
         if ((bits & RENDER_MLX90640_NO0) == RENDER_MLX90640_NO0 || (bits & RENDER_MLX90640_NO1) == RENDER_MLX90640_NO1) {
@@ -565,90 +569,78 @@ void render_task(void* arg)
             }
         }
         
-        // 如果等待返回的是按键事件（没有 MLX 帧位），处理按键
-        if ((bits & (RENDER_ShortPress_Up | RENDER_Hold_Up | RENDER_ShortPress_Center | RENDER_Hold_Center | RENDER_ShortPress_Down | RENDER_Hold_Down)) != 0) {
-            // 检查是否同时短按上下键且选中标题右侧项（温度单位转换键）
-            bool isTempUnitToggle = (currentFocus == SECTION_TITLE && 
-                                     currentTitleSubSelection == TITLE_SUB_RIGHT &&
-                                     (bits & RENDER_ShortPress_Up) == RENDER_ShortPress_Up &&
-                                     (bits & RENDER_ShortPress_Down) == RENDER_ShortPress_Down);
-            
-            // 处理同时短按上下键：切换温度单位
-            if (isTempUnitToggle) {
-                useFahrenheit = !useFahrenheit;
-            }
-            
-            // 处理长按上下键：当焦点在标题区域时，用于左右切换子项
-            if (currentFocus == SECTION_TITLE) {
-                if ((bits & RENDER_Hold_Up) == RENDER_Hold_Up) {
-                    // 长按上键：向左切换（或循环到最右）
-                    currentTitleSubSelection = (currentTitleSubSelection == 0) ? (TITLE_SUB_COUNT - 1) : (currentTitleSubSelection - 1);
-                }
-                if ((bits & RENDER_Hold_Down) == RENDER_Hold_Down) {
-                    // 长按下键：向右切换
-                    currentTitleSubSelection = (currentTitleSubSelection + 1) % TITLE_SUB_COUNT;
-                }
-            }
-            
-            // 处理长按上下键：当焦点在图像区域时，用于显示/隐藏十字线
-            if (currentFocus == SECTION_IMAGE) {
-                if ((bits & RENDER_Hold_Up) == RENDER_Hold_Up) {
-                    // 长按上键：去除十字线
-                    showImageCrosshair = false;
-                }
-                if ((bits & RENDER_Hold_Down) == RENDER_Hold_Down) {
-                    // 长按下键：显示十字线
-                    showImageCrosshair = true;
-                }
-            }
-            
-            // 处理长按上下键：当焦点在底部数据区域时，用于左右切换子项
-            if (currentFocus == SECTION_DATA) {
-                if ((bits & RENDER_Hold_Up) == RENDER_Hold_Up) {
-                    // 长按上键：向左切换（或循环到最右）
-                    currentDataSubSelection = (currentDataSubSelection == 0) ? (DATA_SUB_COUNT - 1) : (currentDataSubSelection - 1);
-                }
-                if ((bits & RENDER_Hold_Down) == RENDER_Hold_Down) {
-                    // 长按下键：向右切换
-                    currentDataSubSelection = (currentDataSubSelection + 1) % DATA_SUB_COUNT;
-                }
-            }
-            
-            // 处理单独短按上下键：在三个主要区域之间切换（排除同时短按的情况）
-            if (!isTempUnitToggle && (bits & RENDER_ShortPress_Up) == RENDER_ShortPress_Up) {
-                currentFocus = (currentFocus == 0) ? (SECTION_COUNT - 1) : (currentFocus - 1);
-                // 切换到其他区域时，重置子选择
-                if (currentFocus != SECTION_TITLE) {
-                    currentTitleSubSelection = TITLE_SUB_LEFT;
-                }
-                if (currentFocus != SECTION_DATA) {
-                    currentDataSubSelection = DATA_SUB_LEFT;
-                }
-                // 切换到其他区域时，不自动隐藏十字线（保持状态）
-            }
-            if (!isTempUnitToggle && (bits & RENDER_ShortPress_Down) == RENDER_ShortPress_Down) {
-                currentFocus = (currentFocus + 1) % SECTION_COUNT;
-                // 切换到其他区域时，重置子选择
-                if (currentFocus != SECTION_TITLE) {
-                    currentTitleSubSelection = TITLE_SUB_LEFT;
-                }
-                if (currentFocus != SECTION_DATA) {
-                    currentDataSubSelection = DATA_SUB_LEFT;
-                }
-                // 切换到其他区域时，不自动隐藏十字线（保持状态）
-            }
-            
-            if ((bits & RENDER_ShortPress_Center) == RENDER_ShortPress_Center) {
-                // 短按 Center：进入简易菜单
+        // 处理 Wheel 和 SIQ02 编码器事件
+        // Wheel: 右拨=进入子项选择模式(或进入菜单), 左拨=退出子项模式
+        // SIQ02: 子项模式下左右切换子项, 非子项模式下上下切换焦点区域
+        
+        // Wheel 右拨：进入子项选择模式，或从子项模式进入菜单
+        if (bits & RENDER_Wheel_Confirm) {
+            if (!subItemMode) {
+                // 进入子项选择模式
+                subItemMode = true;
+            } else {
+                // 已在子项模式，再次右拨进入菜单
                 menu_run_simple();
                 settings_write_all();
                 dispcolor_ClearScreen();
+                subItemMode = false;  // 退出菜单后重置
             }
-            if ((bits & RENDER_Hold_Center) == RENDER_Hold_Center) {
-                // Center 长按：进入简易菜单
-                // menu_run_simple();
-                // settings_write_all();
-                // dispcolor_ClearScreen();
+        }
+        
+        // Wheel 按下：直接进入菜单
+        if (bits & RENDER_Wheel_Press) {
+            menu_run_simple();
+            settings_write_all();
+            dispcolor_ClearScreen();
+            subItemMode = false;
+        }
+        
+        // Wheel 左拨：退出子项模式，返回焦点区域切换
+        if (bits & RENDER_Wheel_Back) {
+            if (subItemMode) {
+                subItemMode = false;
+            } else {
+                // 已在焦点模式，可以重置到默认
+                currentFocus = SECTION_IMAGE;
+            }
+        }
+        
+        // SIQ02 编码器左转
+        if (bits & RENDER_Encoder_Up) {
+            if (subItemMode) {
+                // 子项模式：向左切换子项
+                if (currentFocus == SECTION_TITLE) {
+                    currentTitleSubSelection = (currentTitleSubSelection == 0) ? (TITLE_SUB_COUNT - 1) : (currentTitleSubSelection - 1);
+                } else if (currentFocus == SECTION_DATA) {
+                    currentDataSubSelection = (currentDataSubSelection == 0) ? (DATA_SUB_COUNT - 1) : (currentDataSubSelection - 1);
+                }
+                // 图像区域暂无子项
+            } else {
+                // 焦点模式：向上切换焦点区域
+                currentFocus = (currentFocus == 0) ? (SECTION_COUNT - 1) : (currentFocus - 1);
+            }
+        }
+        
+        // SIQ02 编码器右转
+        if (bits & RENDER_Encoder_Down) {
+            if (subItemMode) {
+                // 子项模式：向右切换子项
+                if (currentFocus == SECTION_TITLE) {
+                    currentTitleSubSelection = (currentTitleSubSelection + 1) % TITLE_SUB_COUNT;
+                } else if (currentFocus == SECTION_DATA) {
+                    currentDataSubSelection = (currentDataSubSelection + 1) % DATA_SUB_COUNT;
+                }
+                // 图像区域暂无子项
+            } else {
+                // 焦点模式：向下切换焦点区域
+                currentFocus = (currentFocus + 1) % SECTION_COUNT;
+            }
+        }
+        
+        // SIQ02 编码器按下：在图像区域切换十字线
+        if (bits & RENDER_Encoder_Press) {
+            if (currentFocus == SECTION_IMAGE) {
+                showImageCrosshair = !showImageCrosshair;
             }
         }
 

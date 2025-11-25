@@ -100,12 +100,12 @@ static void siq02_task(void *arg)
         }
 
         if (evt != SIQ02_EVENT_NONE) {
-            // 直接设置渲染事件位，就像 buttons_task 一样
+            // 直接设置渲染事件位：左转=向上/减少，右转=向下/增加，按下=确认
             if (pHandleEventGroup != NULL) {
                 uint32_t event_bit = 0;
-                if (evt == SIQ02_EVENT_LEFT) event_bit = RENDER_ShortPress_Up;
-                else if (evt == SIQ02_EVENT_RIGHT) event_bit = RENDER_ShortPress_Down;
-                else if (evt == SIQ02_EVENT_PRESS) event_bit = RENDER_ShortPress_Center;
+                if (evt == SIQ02_EVENT_LEFT) event_bit = RENDER_Encoder_Up;
+                else if (evt == SIQ02_EVENT_RIGHT) event_bit = RENDER_Encoder_Down;
+                else if (evt == SIQ02_EVENT_PRESS) event_bit = RENDER_Encoder_Press;
                 if (event_bit) xEventGroupSetBits(pHandleEventGroup, event_bit);
             }
             

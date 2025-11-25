@@ -161,17 +161,17 @@ void wheel_task(void *arg)
                     // 仅在状态变化时发送/打印一次（避免重复刷屏）
                     if (detected != WHEEL_EVENT_NONE && detected != last_evt) {
                         const char *name = "NONE";
-                        if (detected == WHEEL_EVENT_LEFT) name = "LEFT";
-                        else if (detected == WHEEL_EVENT_RIGHT) name = "RIGHT";
-                        else if (detected == WHEEL_EVENT_PRESS) name = "PRESS";
+                        if (detected == WHEEL_EVENT_LEFT) name = "LEFT (Back)";
+                        else if (detected == WHEEL_EVENT_RIGHT) name = "RIGHT (Confirm)";
+                        else if (detected == WHEEL_EVENT_PRESS) name = "PRESS (Confirm)";
                         printf("Wheel detected: %s (mV=%d)\n", name, voltage_mv);
                         
-                        // 直接设置渲染事件位，就像 buttons_task 一样
+                        // 直接设置渲染事件位：左拨=返回，右拨=确认，按下=确认
                         if (pHandleEventGroup != NULL) {
                             uint32_t event_bit = 0;
-                            if (detected == WHEEL_EVENT_LEFT) event_bit = RENDER_ShortPress_Up;
-                            else if (detected == WHEEL_EVENT_RIGHT) event_bit = RENDER_ShortPress_Down;
-                            else if (detected == WHEEL_EVENT_PRESS) event_bit = RENDER_ShortPress_Center;
+                            if (detected == WHEEL_EVENT_LEFT) event_bit = RENDER_Wheel_Back;
+                            else if (detected == WHEEL_EVENT_RIGHT) event_bit = RENDER_Wheel_Confirm;
+                            else if (detected == WHEEL_EVENT_PRESS) event_bit = RENDER_Wheel_Press;
                             if (event_bit) xEventGroupSetBits(pHandleEventGroup, event_bit);
                         }
                         

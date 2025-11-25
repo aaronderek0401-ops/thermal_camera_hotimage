@@ -13,9 +13,9 @@
 #include <freertos/event_groups.h>
 #include <freertos/task.h>
 
-// A very small menu that uses the existing event group button bits.
-// Navigation: Up/Down to move, Center short press to toggle an option,
-// Center long press (Hold) to exit the menu.
+// A very small menu that uses wheel/encoder event bits.
+// Navigation: Encoder Up/Down to move through items and adjust values,
+// Wheel Confirm (right) to select/confirm, Wheel Back (left) to exit/cancel.
 
 typedef enum {
     MENU_OPEN_CAMERA = 0,
@@ -104,17 +104,17 @@ int menu_run_simple(void)
         }
         dispcolor_Update();
 
-        // wait for button events
-        EventBits_t uxBitsToWaitFor = RENDER_ShortPress_Up | RENDER_ShortPress_Down | RENDER_ShortPress_Center | RENDER_Hold_Center;
+        // wait for wheel/encoder events
+        EventBits_t uxBitsToWaitFor = RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back;
         EventBits_t bits = xEventGroupWaitBits(pHandleEventGroup, uxBitsToWaitFor, pdTRUE, pdFALSE, portMAX_DELAY);
 
-        if ((bits & RENDER_ShortPress_Up) == RENDER_ShortPress_Up) {
+        if ((bits & RENDER_Encoder_Up) == RENDER_Encoder_Up) {
             if (selected > 0) selected--; else selected = MENU_ITEMS_COUNT - 1;
         }
-        if ((bits & RENDER_ShortPress_Down) == RENDER_ShortPress_Down) {
+        if ((bits & RENDER_Encoder_Down) == RENDER_Encoder_Down) {
             if (selected < MENU_ITEMS_COUNT - 1) selected++; else selected = 0;
         }
-        if ((bits & RENDER_ShortPress_Center) == RENDER_ShortPress_Center) {
+        if ((bits & RENDER_Wheel_Confirm) == RENDER_Wheel_Confirm) {
             // perform a minimal action per item
             switch (selected) {
             case MENU_OPEN_CAMERA:
@@ -146,21 +146,21 @@ int menu_run_simple(void)
                 while (!done) {
                     dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
                     dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set Min Temp: %.1f%s", v, CELSIUS_SYMBOL);
-                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Up/Down to change, Center save");
+                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:adjust, Wheel:save/cancel");
                     dispcolor_Update();
 
-                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_ShortPress_Up | RENDER_ShortPress_Down | RENDER_ShortPress_Center | RENDER_Hold_Center, pdTRUE, pdFALSE, portMAX_DELAY);
-                    if (bits2 & RENDER_ShortPress_Up) {
+                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                    if (bits2 & RENDER_Encoder_Up) {
                         v += 1.0f;
                     }
-                    if (bits2 & RENDER_ShortPress_Down) {
+                    if (bits2 & RENDER_Encoder_Down) {
                         v -= 1.0f;
                     }
                     // clamp so that max - min >= MIN_TEMPSCALE_DELTA
                     if (v > settingsParms.maxTempNew - MIN_TEMPSCALE_DELTA) v = settingsParms.maxTempNew - MIN_TEMPSCALE_DELTA;
                     if (v < -50.0f) v = -50.0f;
 
-                    if (bits2 & RENDER_ShortPress_Center) {
+                    if (bits2 & RENDER_Wheel_Confirm) {
                         settingsParms.minTempNew = v;
                         settings_write_all();
                         // confirmation
@@ -170,7 +170,7 @@ int menu_run_simple(void)
                         vTaskDelay(600 / portTICK_PERIOD_MS);
                         done = true;
                     }
-                    if (bits2 & RENDER_Hold_Center) {
+                    if (bits2 & RENDER_Wheel_Back) {
                         done = true; // cancel
                     }
                 }
@@ -182,18 +182,18 @@ int menu_run_simple(void)
                 while (!done) {
                     dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
                     dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Palette Center: %d%%", v);
-                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Up/Down to change, Center save");
+                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:adjust, Wheel:save/cancel");
                     dispcolor_Update();
 
-                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_ShortPress_Up | RENDER_ShortPress_Down | RENDER_ShortPress_Center | RENDER_Hold_Center, pdTRUE, pdFALSE, portMAX_DELAY);
-                    if (bits2 & RENDER_ShortPress_Up) {
+                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                    if (bits2 & RENDER_Encoder_Up) {
                         if (v < 100) v++;
                     }
-                    if (bits2 & RENDER_ShortPress_Down) {
+                    if (bits2 & RENDER_Encoder_Down) {
                         if (v > 0) v--;
                     }
 
-                    if (bits2 & RENDER_ShortPress_Center) {
+                    if (bits2 & RENDER_Wheel_Confirm) {
                         settingsParms.PaletteCenterPercent = v;
                         settings_write_all();
                         // confirmation
@@ -203,7 +203,7 @@ int menu_run_simple(void)
                         vTaskDelay(600 / portTICK_PERIOD_MS);
                         done = true;
                     }
-                    if (bits2 & RENDER_Hold_Center) {
+                    if (bits2 & RENDER_Wheel_Back) {
                         done = true; // cancel
                     }
                 }
@@ -215,21 +215,21 @@ int menu_run_simple(void)
                 while (!done) {
                     dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
                     dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set Max Temp: %.1f%s", v, CELSIUS_SYMBOL);
-                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Up/Down to change, Center save");
+                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:adjust, Wheel:save/cancel");
                     dispcolor_Update();
 
-                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_ShortPress_Up | RENDER_ShortPress_Down | RENDER_ShortPress_Center | RENDER_Hold_Center, pdTRUE, pdFALSE, portMAX_DELAY);
-                    if (bits2 & RENDER_ShortPress_Up) {
+                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                    if (bits2 & RENDER_Encoder_Up) {
                         v += 1.0f;
                     }
-                    if (bits2 & RENDER_ShortPress_Down) {
+                    if (bits2 & RENDER_Encoder_Down) {
                         v -= 1.0f;
                     }
                     // clamp so that max - min >= MIN_TEMPSCALE_DELTA
                     if (v < settingsParms.minTempNew + MIN_TEMPSCALE_DELTA) v = settingsParms.minTempNew + MIN_TEMPSCALE_DELTA;
                     if (v > 500.0f) v = 500.0f;
 
-                    if (bits2 & RENDER_ShortPress_Center) {
+                    if (bits2 & RENDER_Wheel_Confirm) {
                         settingsParms.maxTempNew = v;
                         settings_write_all();
                         dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
@@ -238,7 +238,7 @@ int menu_run_simple(void)
                         vTaskDelay(600 / portTICK_PERIOD_MS);
                         done = true;
                     }
-                    if (bits2 & RENDER_Hold_Center) {
+                    if (bits2 & RENDER_Wheel_Back) {
                         done = true; // cancel
                     }
                 }
@@ -249,8 +249,8 @@ int menu_run_simple(void)
                 break;
             }
         }
-        if ((bits & RENDER_Hold_Center) == RENDER_Hold_Center) {
-            exit = true; // long press center exits menu
+        if ((bits & RENDER_Wheel_Back) == RENDER_Wheel_Back) {
+            exit = true; // wheel left exits menu
         }
     }
 
