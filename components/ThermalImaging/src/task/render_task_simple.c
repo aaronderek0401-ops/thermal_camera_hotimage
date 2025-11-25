@@ -267,6 +267,9 @@ static data_sub_selection_t currentDataSubSelection = DATA_SUB_LEFT;
 // 子项选择模式：true表示当前在子项中左右选择，false表示在焦点区域间切换
 static bool subItemMode = false;
 
+// 调色板选择模式：true表示当前正在用编码器调整调色板
+static bool paletteSelectMode = false;
+
 // 图像区域十字线显示状态
 static bool showImageCrosshair = false;
 
@@ -572,32 +575,51 @@ void render_task(void* arg)
         // 处理 Wheel 和 SIQ02 编码器事件
         // Wheel: 右拨=进入子项选择模式(或进入菜单), 左拨=退出子项模式
         // SIQ02: 子项模式下左右切换子项, 非子项模式下上下切换焦点区域
+        // 特殊: 在palette子项时右拨进入调色板选择模式，编码器调整调色板
         
-        // Wheel 右拨：进入子项选择模式，或从子项模式进入菜单
+        // Wheel 右拨：进入子项选择模式，或从子项模式进入菜单/调色板选择
         if (bits & RENDER_Wheel_Confirm) {
-            if (!subItemMode) {
+            if (paletteSelectMode) {
+                // 在调色板选择模式，右拨确认并退出
+                settings_write_all();
+                paletteSelectMode = false;
+            } else if (!subItemMode) {
                 // 进入子项选择模式
                 subItemMode = true;
             } else {
-                // 已在子项模式，再次右拨进入菜单
-                menu_run_simple();
-                settings_write_all();
-                dispcolor_ClearScreen();
-                subItemMode = false;  // 退出菜单后重置
+                // 已在子项模式
+                if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
+                    // 在palette子项，进入调色板选择模式
+                    paletteSelectMode = true;
+                } else {
+                    // 其他子项，进入菜单
+                    menu_run_simple();
+                    settings_write_all();
+                    dispcolor_ClearScreen();
+                    subItemMode = false;
+                }
             }
         }
         
         // Wheel 按下：直接进入菜单
         if (bits & RENDER_Wheel_Press) {
-            menu_run_simple();
-            settings_write_all();
-            dispcolor_ClearScreen();
-            subItemMode = false;
+            if (paletteSelectMode) {
+                settings_write_all();
+                paletteSelectMode = false;
+            } else {
+                menu_run_simple();
+                settings_write_all();
+                dispcolor_ClearScreen();
+                subItemMode = false;
+            }
         }
         
-        // Wheel 左拨：退出子项模式，返回焦点区域切换
+        // Wheel 左拨：退出调色板选择/子项模式，返回焦点区域切换
         if (bits & RENDER_Wheel_Back) {
-            if (subItemMode) {
+            if (paletteSelectMode) {
+                // 退出调色板选择模式（不保存）
+                paletteSelectMode = false;
+            } else if (subItemMode) {
                 subItemMode = false;
             } else {
                 // 已在焦点模式，可以重置到默认
@@ -607,7 +629,14 @@ void render_task(void* arg)
         
         // SIQ02 编码器左转
         if (bits & RENDER_Encoder_Up) {
-            if (subItemMode) {
+            if (paletteSelectMode) {
+                // 调色板选择模式：切换到上一个调色板
+                if (settingsParms.ColorScale == 0) {
+                    settingsParms.ColorScale = COLOR_MAX - 1;
+                } else {
+                    settingsParms.ColorScale--;
+                }
+            } else if (subItemMode) {
                 // 子项模式：向左切换子项
                 if (currentFocus == SECTION_TITLE) {
                     currentTitleSubSelection = (currentTitleSubSelection == 0) ? (TITLE_SUB_COUNT - 1) : (currentTitleSubSelection - 1);
@@ -623,7 +652,10 @@ void render_task(void* arg)
         
         // SIQ02 编码器右转
         if (bits & RENDER_Encoder_Down) {
-            if (subItemMode) {
+            if (paletteSelectMode) {
+                // 调色板选择模式：切换到下一个调色板
+                settingsParms.ColorScale = (settingsParms.ColorScale + 1) % COLOR_MAX;
+            } else if (subItemMode) {
                 // 子项模式：向右切换子项
                 if (currentFocus == SECTION_TITLE) {
                     currentTitleSubSelection = (currentTitleSubSelection + 1) % TITLE_SUB_COUNT;
