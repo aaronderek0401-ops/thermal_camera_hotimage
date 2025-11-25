@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include <stdio.h>
 #include "wheel.h"
+#include "thermalimaging_simple.h"
 
 // wheel module internal queue & callback
 static QueueHandle_t s_wheel_queue = NULL;
@@ -164,7 +165,17 @@ void wheel_task(void *arg)
                         else if (detected == WHEEL_EVENT_RIGHT) name = "RIGHT";
                         else if (detected == WHEEL_EVENT_PRESS) name = "PRESS";
                         printf("Wheel detected: %s (mV=%d)\n", name, voltage_mv);
-                        // 发布到 wheel 自己的事件队列并调用回调（若已注册）
+                        
+                        // 直接设置渲染事件位，就像 buttons_task 一样
+                        if (pHandleEventGroup != NULL) {
+                            uint32_t event_bit = 0;
+                            if (detected == WHEEL_EVENT_LEFT) event_bit = RENDER_ShortPress_Up;
+                            else if (detected == WHEEL_EVENT_RIGHT) event_bit = RENDER_ShortPress_Down;
+                            else if (detected == WHEEL_EVENT_PRESS) event_bit = RENDER_ShortPress_Center;
+                            if (event_bit) xEventGroupSetBits(pHandleEventGroup, event_bit);
+                        }
+                        
+                        // 仍然发布到自己的队列和回调（保持 API 兼容性）
                         wheel_post_event(detected);
                         if (s_wheel_callback) s_wheel_callback(detected);
                         last_evt = detected;

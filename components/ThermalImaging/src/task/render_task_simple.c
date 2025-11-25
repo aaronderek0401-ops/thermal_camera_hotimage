@@ -11,8 +11,7 @@
 #include <stdbool.h>
 #include "simple_menu.h"
 #include "settings.h"
-#include "wheel.h"
-#include "siq02.h"
+
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
 //test on DELL
@@ -320,11 +319,6 @@ void render_task(void* arg)
     // 等待MLX90640初始化完成
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-    // Register wheel/encoder callbacks so they behave like the existing button bits
-    // (If wheel/siq02 tasks are not started elsewhere, make sure to start them.)
-    wheel_register_callback(s_wheel_to_render_cb);
-    siq02_register_callback(s_siq02_to_render_cb);
-    
     // 主循环
     while (1) {
         // 等待MLX90640数据更新或按键（保留按键事件以便简单菜单）
@@ -660,44 +654,5 @@ void render_task(void* arg)
 
         // 不需要额外延迟，xEventGroupWaitBits已经会等待新数据
         // vTaskDelay(50 / portTICK_PERIOD_MS);  // 移除：这个延迟导致FPS被限制
-    }
-}
-
-// ------------------------------------------------------------------
-// Adapter callbacks: convert wheel/siq02 events into render event bits
-// ------------------------------------------------------------------
-static void s_wheel_to_render_cb(wheel_event_t evt)
-{
-    if (pHandleEventGroup == NULL) return;
-    switch (evt) {
-    case WHEEL_EVENT_LEFT:
-        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Up);
-        break;
-    case WHEEL_EVENT_RIGHT:
-        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Down);
-        break;
-    case WHEEL_EVENT_PRESS:
-        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Center);
-        break;
-    default:
-        break;
-    }
-}
-
-static void s_siq02_to_render_cb(siq02_event_t evt)
-{
-    if (pHandleEventGroup == NULL) return;
-    switch (evt) {
-    case SIQ02_EVENT_LEFT:
-        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Up);
-        break;
-    case SIQ02_EVENT_RIGHT:
-        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Down);
-        break;
-    case SIQ02_EVENT_PRESS:
-        xEventGroupSetBits(pHandleEventGroup, RENDER_ShortPress_Center);
-        break;
-    default:
-        break;
     }
 }

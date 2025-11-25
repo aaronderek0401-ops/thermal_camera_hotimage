@@ -4,6 +4,7 @@
 #include "freertos/queue.h"
 #include "driver/gpio.h"
 #include "siq02.h"
+#include "thermalimaging_simple.h"
 #include <stdio.h>
 #include <math.h>
 
@@ -99,6 +100,16 @@ static void siq02_task(void *arg)
         }
 
         if (evt != SIQ02_EVENT_NONE) {
+            // 直接设置渲染事件位，就像 buttons_task 一样
+            if (pHandleEventGroup != NULL) {
+                uint32_t event_bit = 0;
+                if (evt == SIQ02_EVENT_LEFT) event_bit = RENDER_ShortPress_Up;
+                else if (evt == SIQ02_EVENT_RIGHT) event_bit = RENDER_ShortPress_Down;
+                else if (evt == SIQ02_EVENT_PRESS) event_bit = RENDER_ShortPress_Center;
+                if (event_bit) xEventGroupSetBits(pHandleEventGroup, event_bit);
+            }
+            
+            // 仍然发布到自己的队列和回调（保持 API 兼容性）
             if (s_siq02_queue) {
                 xQueueSend(s_siq02_queue, &evt, 0);
             }
