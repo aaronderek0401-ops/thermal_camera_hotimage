@@ -171,6 +171,13 @@ void wheel_task(void *arg)
                         detected = WHEEL_EVENT_RIGHT;
                     }
 
+                    // 如果没有检测到动作，但电压在空闲区间，则重置 last_evt（允许下次相同动作被识别）
+                    if (detected == WHEEL_EVENT_NONE) {
+                        if (voltage_mv >= (V_IDLE - 50) && voltage_mv <= (V_IDLE + 50)) {
+                            last_evt = WHEEL_EVENT_NONE;
+                        }
+                    }
+
                     // 仅在状态变化时发送/打印一次（避免重复刷屏），并添加防抖
                     TickType_t now = xTaskGetTickCount();
                     if (detected != WHEEL_EVENT_NONE && detected != last_evt && 
@@ -180,7 +187,7 @@ void wheel_task(void *arg)
                         else if (detected == WHEEL_EVENT_RIGHT) name = "RIGHT (Confirm)";
                         else if (detected == WHEEL_EVENT_PRESS) name = "PRESS (Confirm)";
                         printf("Wheel detected: %s (mV=%d)\n", name, voltage_mv);
-                        
+
                         // 直接设置渲染事件位：左拨=返回，右拨=确认，按下=确认
                         if (pHandleEventGroup != NULL) {
                             uint32_t event_bit = 0;
@@ -189,7 +196,7 @@ void wheel_task(void *arg)
                             else if (detected == WHEEL_EVENT_PRESS) event_bit = RENDER_Wheel_Press;
                             if (event_bit) xEventGroupSetBits(pHandleEventGroup, event_bit);
                         }
-                        
+
                         // 仍然发布到自己的队列和回调（保持 API 兼容性）
                         wheel_post_event(detected);
                         if (s_wheel_callback) s_wheel_callback(detected);
@@ -197,13 +204,13 @@ void wheel_task(void *arg)
                         last_event_time = now;
                     }
                 } else {
-                    printf("ADC2 CH6 read failed: %s\n", esp_err_to_name(r));
+                    printf("ADC1 CH0 read failed: %s\n", esp_err_to_name(r));
                 }
             } else {
-                printf("ADC2 CH6 config failed: %s\n", esp_err_to_name(r));
+                printf("ADC1 CH0 config failed: %s\n", esp_err_to_name(r));
             }
         } else {
-            printf("ADC2 not initialized\n");
+            printf("ADC1 not initialized\n");
         }
 
         vTaskDelay(pdMS_TO_TICKS(500));
