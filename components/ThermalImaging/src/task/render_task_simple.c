@@ -346,8 +346,84 @@ void render_task(void* arg)
     
     printf("Image buffers allocated successfully\n");
     
-    // 等待MLX90640初始化完成
-    vTaskDelay(2000 / portTICK_PERIOD_MS);
+    // 开机动画：在等待MLX90640初始化期间显示
+    {
+        const char* brand_text = "BOM_FRUIT";
+        const char* sub_text = "Thermal Camera";
+        const int16_t screen_w = dispcolor_getWidth();
+        const int16_t screen_h = dispcolor_getHeight();
+        
+        // 动画参数
+        const int total_frames = 40;        // 总帧数
+        const int frame_delay_ms = 50;      // 每帧延迟(ms)，总时长约2秒
+        
+        for (int frame = 0; frame < total_frames; frame++) {
+            dispcolor_ClearScreen();
+            
+            // 计算动画进度 (0.0 ~ 1.0)
+            float progress = (float)frame / (float)(total_frames - 1);
+            
+            // 主标题 "BOM_FRUIT" - 从左侧滑入并放大
+            int16_t brand_w = dispcolor_getStrWidth(FONTID_16F, brand_text);
+            int16_t brand_h = 16;
+            int16_t brand_target_x = (screen_w - brand_w) / 2;
+            int16_t brand_target_y = (screen_h / 2) - brand_h - 5;
+            
+            // 滑入效果：从左侧外部滑入到中心
+            int16_t brand_start_x = -brand_w;
+            int16_t brand_x = brand_start_x + (int16_t)((brand_target_x - brand_start_x) * progress);
+            int16_t brand_y = brand_target_y;
+            
+            // 颜色渐变：从暗红到亮橙色
+            uint8_t r = (uint8_t)(100 + 155 * progress);
+            uint8_t g = (uint8_t)(50 + 150 * progress);
+            uint8_t b = (uint8_t)(0 + 50 * progress);
+            uint16_t brand_color = RGB565(r, g, b);
+            
+            // 绘制主标题（带阴影）
+            dispcolor_DrawString(brand_x + 1, brand_y + 1, FONTID_16F, (uint8_t*)brand_text, RGB565(30, 30, 30));
+            dispcolor_DrawString(brand_x, brand_y, FONTID_16F, (uint8_t*)brand_text, brand_color);
+            
+            // 副标题 "Thermal Camera" - 淡入效果（后半段才显示）
+            if (progress > 0.4f) {
+                float sub_progress = (progress - 0.4f) / 0.6f; // 0 ~ 1
+                int16_t sub_w = dispcolor_getStrWidth(FONTID_6X8M, sub_text);
+                int16_t sub_x = (screen_w - sub_w) / 2;
+                int16_t sub_y = (screen_h / 2) + 10;
+                
+                // 颜色淡入
+                uint8_t sub_gray = (uint8_t)(180 * sub_progress);
+                uint16_t sub_color = RGB565(sub_gray, sub_gray, sub_gray);
+                
+                dispcolor_DrawString(sub_x, sub_y, FONTID_6X8M, (uint8_t*)sub_text, sub_color);
+            }
+            
+            // 底部进度条
+            int16_t bar_w = screen_w - 60;
+            int16_t bar_h = 4;
+            int16_t bar_x = 30;
+            int16_t bar_y = screen_h - 30;
+            int16_t fill_w = (int16_t)(bar_w * progress);
+            
+            // 进度条边框
+            dispcolor_DrawRectangle(bar_x - 1, bar_y - 1, bar_x + bar_w + 1, bar_y + bar_h + 1, RGB565(80, 80, 80));
+            // 进度条填充
+            if (fill_w > 0) {
+                dispcolor_FillRect(bar_x, bar_y, fill_w, bar_h, RGB565(0, 200, 100));
+            }
+            
+            // 更新显示
+            st7789_update();
+            vTaskDelay(frame_delay_ms / portTICK_PERIOD_MS);
+        }
+        
+        // 最后停留一会儿显示完整画面
+        vTaskDelay(200 / portTICK_PERIOD_MS);
+        
+        // 清屏准备进入主界面
+        dispcolor_ClearScreen();
+        st7789_update();
+    }
 
     // 从持久化设置中恢复十字线位置（如果设置里有的话）
     cross_x = settingsParms.CrossX;
@@ -444,18 +520,28 @@ void render_task(void* arg)
 
             title_x = (dispcolor_getWidth() - title_x) / 2;
             
-            // 确定各标题项的颜色（如果焦点在标题区域，高亮当前选中的子项）
+            // 确定各标题项的颜色
+            // 白色=未选中，蓝色=焦点在此区域，黄色=subItemMode下选中，绿色=正在调节模式
             uint16_t leftTitleColor = WHITE;
             uint16_t centerTitleColor = WHITE;
             uint16_t rightTitleColor = WHITE;
             
             if (currentFocus == SECTION_TITLE) {
-                if (currentTitleSubSelection == TITLE_SUB_LEFT) {
-                    leftTitleColor = RGB565(0, 200, 255); // 蓝色高亮
-                } else if (currentTitleSubSelection == TITLE_SUB_CENTER) {
-                    centerTitleColor = RGB565(0, 200, 255); // 蓝色高亮
-                } else if (currentTitleSubSelection == TITLE_SUB_RIGHT) {
-                    rightTitleColor = RGB565(0, 200, 255); // 蓝色高亮
+                // 焦点在标题区域
+                if (subItemMode) {
+                    // 子项选择模式：当前选中项用黄色，其他用白色
+                    if (currentTitleSubSelection == TITLE_SUB_LEFT) {
+                        leftTitleColor = paletteSelectMode ? RGB565(0, 255, 128) : RGB565(255, 255, 0);
+                    } else if (currentTitleSubSelection == TITLE_SUB_CENTER) {
+                        centerTitleColor = RGB565(255, 255, 0);
+                    } else if (currentTitleSubSelection == TITLE_SUB_RIGHT) {
+                        rightTitleColor = tempUnitSelectMode ? RGB565(0, 255, 128) : RGB565(255, 255, 0);
+                    }
+                } else {
+                    // 焦点模式（未进入子项）：整个区域用蓝色提示
+                    leftTitleColor = RGB565(0, 200, 255);
+                    centerTitleColor = RGB565(0, 200, 255);
+                    rightTitleColor = RGB565(0, 200, 255);
                 }
             }
             
@@ -516,18 +602,28 @@ void render_task(void* arg)
             
             if (settingsParms.RealTimeAnalysis) {
                 // 显示温度范围信息和帧率
+                // 确定底部数据区域各项颜色
+                // 白色=未选中，蓝色=焦点在此区域，黄色=subItemMode下选中，绿色=正在调节模式
                 uint16_t leftColor = WHITE;
                 uint16_t centerColor = WHITE;
                 uint16_t rightColor = WHITE;
                 
-                // 如果焦点在底部数据区域，高亮当前选中的子项
                 if (currentFocus == SECTION_DATA) {
-                    if (currentDataSubSelection == DATA_SUB_LEFT) {
-                        leftColor = RGB565(0, 200, 255); // 蓝色高亮
-                    } else if (currentDataSubSelection == DATA_SUB_CENTER) {
-                        centerColor = RGB565(0, 200, 255); // 蓝色高亮
-                    } else if (currentDataSubSelection == DATA_SUB_RIGHT) {
-                        rightColor = RGB565(0, 200, 255); // 蓝色高亮
+                    // 焦点在底部数据区域
+                    if (subItemMode) {
+                        // 子项选择模式：当前选中项用黄色，正在调节用绿色
+                        if (currentDataSubSelection == DATA_SUB_LEFT) {
+                            leftColor = RGB565(255, 255, 0);
+                        } else if (currentDataSubSelection == DATA_SUB_CENTER) {
+                            centerColor = RGB565(255, 255, 0);
+                        } else if (currentDataSubSelection == DATA_SUB_RIGHT) {
+                            rightColor = channelSelectMode ? RGB565(0, 255, 128) : RGB565(255, 255, 0);
+                        }
+                    } else {
+                        // 焦点模式（未进入子项）：整个区域用蓝色提示
+                        leftColor = RGB565(0, 200, 255);
+                        centerColor = RGB565(0, 200, 255);
+                        rightColor = RGB565(0, 200, 255);
                     }
                 }
                 
