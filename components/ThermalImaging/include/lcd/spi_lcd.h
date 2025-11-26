@@ -145,7 +145,7 @@ typedef enum {
  *        驱动会根据用户配置自动更改LCD-IC的扫描方向，来适配屏幕的安装方向
  *       （注意：easyIO仅对STxxxx-IC支持横屏适配，且需要用户自行到  simple_gui.c 的 LCD_SetCursor\LCD_SetWindows 修改偏移基地址）
  */
-#define LCD_DIR vertical // vertical、horizontal。竖屏 / 横屏 (240x240方屏使用竖屏模式)
+#define LCD_DIR horizontal // vertical、horizontal。竖屏 / 横屏 (240x240方屏使用竖屏模式)
 #define LCD_INVERT invert_en // invert_dis、invert_en。正着放 / 倒立
 #define LCD_MIRROR mirror_dis // mirror_dis、mirror_dis。不开启左右镜像显示 / 开启镜像显示（可用于镜面反射及棱镜的镜像显示，可使画面左右翻转。参照分光棱镜）
 

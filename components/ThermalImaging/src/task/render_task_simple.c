@@ -22,6 +22,15 @@
 
 // Runtime flag to enable low-quality rendering (set from menu when switching to 32Hz)
 bool lowQualityRender = false;
+// request flag used by render loop; declared here so helper functions can set it
+static bool forceRender = false;
+
+// render_request_force: called by power manager to request an immediate redraw
+void render_request_force(void)
+{
+    // set the file-local flag used by the render loop
+    forceRender = true;
+}
 
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
@@ -299,7 +308,6 @@ static bool useFahrenheit = false;
 // 绘图通道：false -> X轴(中心行)，true -> Y轴(中心列)
 static bool plotChannelY = false;
 // 请求立即重绘（即使没有新MLX帧），由输入处理器设置，渲染循环检测并执行一次绘制
-static bool forceRender = false;
 // 临时覆盖消息（短时提示），由输入处理器设置，渲染循环负责绘制并超时清除
 static bool overlay_active = false;
 static char overlay_line1[64] = {0};

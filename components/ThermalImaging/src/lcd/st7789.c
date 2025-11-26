@@ -383,6 +383,16 @@ void st7789_DisplayOff(void)
 #endif // CONFIG_ESP32_SPI_ST7789_LCD
 }
 
+void st7789_DisplayOn(void)
+{
+#ifdef CONFIG_ESP32_SPI_ST7789_LCD
+    // Send Display ON command
+    lcd_cmd(LCD_SPI, ST7789_SLPOUT); // ensure out of sleep
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    lcd_cmd(LCD_SPI, ST7789_DISPON);
+#endif // CONFIG_ESP32_SPI_ST7789_LCD
+}
+
 #ifdef CONFIG_ESP32_SPI_ST7789_LCD
 /**
  * @brief 交换颜色

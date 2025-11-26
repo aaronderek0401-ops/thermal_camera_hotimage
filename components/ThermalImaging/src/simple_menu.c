@@ -3,6 +3,7 @@
 #include "dispcolor.h"
 #include "CelsiusSymbol.h"
 #include "render_task.h"
+#include "sleep.h"
 #include "settings.h"
 // #include "save.h"
 #include <stdbool.h>
@@ -126,6 +127,13 @@ int menu_run_simple(void)
         if ((bits & RENDER_Encoder_Down) == RENDER_Encoder_Down) {
             if (selected < MENU_ITEMS_COUNT - 1) selected++; else selected = 0;
         }
+        if ((bits & RENDER_Wheel_Back) == RENDER_Wheel_Back) {
+            // Wheel left in the main menu enters sleep mode
+            system_enter_sleep();
+            exit = true; // leave menu while device sleeps
+            continue;
+        }
+
         if ((bits & RENDER_Wheel_Confirm) == RENDER_Wheel_Confirm) {
             // perform a minimal action per item
             switch (selected) {

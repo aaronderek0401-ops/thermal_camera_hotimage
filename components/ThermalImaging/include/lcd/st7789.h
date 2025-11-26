@@ -24,6 +24,7 @@ void st7789_init();
 
 // 
 void st7789_DisplayOff(void);
+void st7789_DisplayOn(void);
 
 // 该程序为显示器的 1 个像素着色
 void st7789_DrawPixel(int16_t x, int16_t y, uint16_t color);

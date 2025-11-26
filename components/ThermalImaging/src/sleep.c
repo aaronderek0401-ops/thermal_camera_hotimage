@@ -1,5 +1,6 @@
 #include "sleep.h"
 #include "dispcolor.h"
+#include "st7789.h"
 #include "driver/rtc_io.h"
 // #include "esp32/ulp.h"
 #include "esp_log.h"
@@ -76,4 +77,80 @@ void Deep_Sleep_Run()
 #endif
 }
 
-// TODO 这里编译不通过 先注释
+// -------------------------------------------------------------
+// Runtime sleep manager (lightweight):
+// - system_enter_sleep(): pause MLX reads, turn off/dim display, spawn watcher
+// - system_exit_sleep(): resume MLX reads, restore display/backlight
+// The watcher task waits for any user input event and wakes the system.
+// -------------------------------------------------------------
+
+#include "tasks/render_task.h" // for pHandleEventGroup and event masks
+#include "settings.h"
+
+// external hook to pause MLX reads (defined in mlx90640_task.c)
+extern uint8_t setMLX90640IsPause(uint8_t isPause);
+
+static volatile bool s_sleepMode = false;
+static TaskHandle_t s_sleepWatcher = NULL;
+
+// mask of input events that should wake the system
+#define WAKE_INPUT_MASK (RENDER_Wheel_Back | RENDER_Wheel_Confirm | RENDER_Wheel_Press | \
+                        RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Encoder_Press | \
+                        RENDER_ShortPress_Center | RENDER_ShortPress_Up | RENDER_ShortPress_Down)
+
+static void sleep_watcher_task(void* arg)
+{
+    (void)arg;
+    if (pHandleEventGroup == NULL) {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // wait for any input event indefinitely
+    EventBits_t bits = xEventGroupWaitBits(pHandleEventGroup, WAKE_INPUT_MASK, pdTRUE, pdFALSE, portMAX_DELAY);
+    if (bits & WAKE_INPUT_MASK) {
+        // wake
+        system_exit_sleep();
+    }
+
+    s_sleepWatcher = NULL;
+    vTaskDelete(NULL);
+}
+
+void system_enter_sleep(void)
+{
+    if (s_sleepMode) return;
+    s_sleepMode = true;
+
+    // pause MLX sampling
+    setMLX90640IsPause(1);
+
+    // dim backlight and send display off
+    dispcolor_SetBrightness(0);
+    dispcolor_DisplayOff();
+
+    // start watcher task to listen for any input to wake
+    if (s_sleepWatcher == NULL) {
+        xTaskCreatePinnedToCore(sleep_watcher_task, "sleep_watcher", 1024, NULL, 5, &s_sleepWatcher, tskNO_AFFINITY);
+    }
+}
+
+void system_exit_sleep(void)
+{
+    if (!s_sleepMode) return;
+    s_sleepMode = false;
+
+    // resume MLX sampling
+    setMLX90640IsPause(0);
+
+    // restore backlight using global settingsParms
+    // Turn display module back on, then restore backlight
+    st7789_DisplayOn();
+    vTaskDelay(20 / portTICK_PERIOD_MS);
+    dispcolor_SetBrightness(settingsParms.LcdBrightness);
+
+    // request a render by setting an MLX frame bit so render loop will draw once MLX resumes
+    if (pHandleEventGroup) {
+        xEventGroupSetBits(pHandleEventGroup, RENDER_MLX90640_NO0);
+    }
+}
