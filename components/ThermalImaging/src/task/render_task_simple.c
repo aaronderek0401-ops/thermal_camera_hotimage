@@ -835,16 +835,11 @@ void render_task(void* arg)
                     forceRender = true;
                 }
             } else if (subItemMode) {
-                // 子项模式：向左切换子项（在右侧子项时改为切换XY通道）
+                // 子项模式：编码器切换子项（不直接切换通道，需先进入 channelSelectMode）
                 if (currentFocus == SECTION_TITLE) {
                     currentTitleSubSelection = (currentTitleSubSelection == 0) ? (TITLE_SUB_COUNT - 1) : (currentTitleSubSelection - 1);
                 } else if (currentFocus == SECTION_DATA) {
-                    if (currentDataSubSelection == DATA_SUB_RIGHT) {
-                        // 在右侧子项，旋转编码器切换通道
-                        plotChannelY = !plotChannelY;
-                    } else {
-                        currentDataSubSelection = (currentDataSubSelection == 0) ? (DATA_SUB_COUNT - 1) : (currentDataSubSelection - 1);
-                    }
+                    currentDataSubSelection = (currentDataSubSelection == 0) ? (DATA_SUB_COUNT - 1) : (currentDataSubSelection - 1);
                 }
                 // 图像区域暂无子项
             } else {
@@ -876,16 +871,11 @@ void render_task(void* arg)
                     forceRender = true;
                 }
             } else if (subItemMode) {
-                // 子项模式：向右切换子项（在右侧子项时改为切换XY通道）
+                // 子项模式：编码器切换子项（不直接切换通道，需先进入 channelSelectMode）
                 if (currentFocus == SECTION_TITLE) {
                     currentTitleSubSelection = (currentTitleSubSelection + 1) % TITLE_SUB_COUNT;
                 } else if (currentFocus == SECTION_DATA) {
-                    if (currentDataSubSelection == DATA_SUB_RIGHT) {
-                        // 在右侧子项，旋转编码器切换通道
-                        plotChannelY = !plotChannelY;
-                    } else {
-                        currentDataSubSelection = (currentDataSubSelection + 1) % DATA_SUB_COUNT;
-                    }
+                    currentDataSubSelection = (currentDataSubSelection + 1) % DATA_SUB_COUNT;
                 }
                 // 图像区域暂无子项
             } else {
