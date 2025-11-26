@@ -13,6 +13,11 @@
 #include <freertos/event_groups.h>
 #include <freertos/task.h>
 
+// allow menu to apply new MLX rate immediately
+extern int mlx90640_flushRate(void);
+// runtime control for render quality in render_task_simple
+extern bool lowQualityRender;
+
 // A very small menu that uses wheel/encoder event bits.
 // Navigation: Encoder Up/Down to move through items and adjust values,
 // Wheel Confirm (right) to select/confirm, Wheel Back (left) to exit/cancel.
@@ -23,10 +28,13 @@ typedef enum {
     MENU_SET_MIN_TEMP,
     MENU_SET_PALETTE_CENTER,
     MENU_SET_MAX_TEMP,
-    MENU_PALETTE_NEXT,
+    MENU_MLX_FPS,
     MENU_REALTIME_ANALYSIS,
     MENU_ITEMS_COUNT
 } menu_item_t;
+
+// Human-readable MLX90640 refresh rate strings (indices 0..7 -> 0.5..64 Hz)
+static const char* MLX_FPS_STR[] = { "0.5", "1", "2", "4", "8", "16", "32", "64" };
 
 int menu_run_simple(void)
 {
@@ -71,8 +79,12 @@ int menu_run_simple(void)
             case MENU_SET_MAX_TEMP:
                 snprintf(labels[i], sizeof(labels[i]), "Max Temp: %.1f%s", settingsParms.maxTempNew, CELSIUS_SYMBOL);
                 break;
-            case MENU_PALETTE_NEXT:
-                snprintf(labels[i], sizeof(labels[i]), "Palette: Next");
+            case MENU_MLX_FPS:
+                {
+                    // Only two options supported in this menu: 16Hz (index 5) and 32Hz (index 6)
+                    bool is32 = (settingsParms.MLX90640FPS >= 6);
+                    snprintf(labels[i], sizeof(labels[i]), "MLX FPS: %s Hz", is32 ? MLX_FPS_STR[6] : MLX_FPS_STR[5]);
+                }
                 break;
             case MENU_REALTIME_ANALYSIS:
                 snprintf(labels[i], sizeof(labels[i]), "Real-time Data Analysis: %s", settingsParms.RealTimeAnalysis ? "On" : "Off");
@@ -124,20 +136,52 @@ int menu_run_simple(void)
                 settingsParms.AutoScaleMode = !settingsParms.AutoScaleMode;
                 settings_write_all();
                 break;
-            case MENU_PALETTE_NEXT:
-                settingsParms.ColorScale = (settingsParms.ColorScale + 1) % COLOR_MAX;
-                // persist new palette selection; render_task_simple regenerates palette each frame
-                settings_write_all();
-                {
-                    int16_t msg_x = 40;
-                    int16_t msg_y = dispcolor_getHeight() - 28;
-                    // clear area to avoid overlapping digits
-                    dispcolor_DrawRectangleFilled(msg_x - 4, msg_y - 2, dispcolor_getWidth() - 20, msg_y + 12, BLACK);
-                    dispcolor_printf(msg_x, msg_y, FONTID_6X8M, WHITE, "Palette %d", settingsParms.ColorScale);
+            case MENU_MLX_FPS: {
+                // Interactive adjust loop for MLX90640 FPS index (0..7)
+                // Only allow two choices: 16Hz (index 5) and 32Hz (index 6)
+                uint8_t v = (settingsParms.MLX90640FPS >= 6) ? 6 : 5;
+                bool done = false;
+                // clear the menu list area to avoid interference and draw prompt area
+                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                // redraw title
+                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
+                while (!done) {
+                    dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
+                    dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set MLX FPS: %s Hz", MLX_FPS_STR[v]);
+                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:toggle, Wheel:save/cancel");
                     dispcolor_Update();
+
+                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                    if (bits2 & (RENDER_Encoder_Up | RENDER_Encoder_Down)) {
+                        // toggle between 16Hz (5) and 32Hz (6)
+                        v = (v == 5) ? 6 : 5;
+                    }
+
+                    if (bits2 & RENDER_Wheel_Confirm) {
+                        settingsParms.MLX90640FPS = v;
+                        settings_write_all();
+                        // apply immediately to sensor
+                        mlx90640_flushRate();
+                        // enable low quality render if 32Hz selected
+                        lowQualityRender = (v == 6);
+                        // confirmation
+                        dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
+                        dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "MLX FPS set: %s Hz", MLX_FPS_STR[v]);
+                        if (lowQualityRender) dispcolor_printf(28, 136, FONTID_6X8M, WHITE, "LowQuality render: ON");
+                        else dispcolor_printf(28, 136, FONTID_6X8M, WHITE, "LowQuality render: OFF");
+                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+
+                        dispcolor_Update();
+                        vTaskDelay(600 / portTICK_PERIOD_MS);
+                        done = true;
+                    }
+                    if (bits2 & RENDER_Wheel_Back) {
+                        // cancel: clear adjustment area before returning to main menu
+                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                        done = true;
+                    }
                 }
-                vTaskDelay(300 / portTICK_PERIOD_MS);
-                break;
+            } break;
             case MENU_SET_MIN_TEMP: {
                 // Interactive adjust loop for min temp
                 float v = settingsParms.minTempNew;

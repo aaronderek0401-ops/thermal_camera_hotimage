@@ -17,6 +17,12 @@
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
 //test on DELL
 
+// Uncomment to enable low-quality fast rendering path (nearest-neighbor)
+// #define LOW_QUALITY_RENDER
+
+// Runtime flag to enable low-quality rendering (set from menu when switching to 32Hz)
+bool lowQualityRender = false;
+
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
 {
@@ -562,12 +568,26 @@ void render_task(void* arg)
             const uint16_t img_width = hq_img_width;
             const uint16_t img_x_start = (dispcolor_getWidth() - img_width) / 2;  // 居中显示（通常为0）
             
-            // 步骤1: 高斯模糊2倍放大
-            idwGauss(TermoImage16, THERMALIMAGE_RESOLUTION_WIDTH, THERMALIMAGE_RESOLUTION_HEIGHT, 2, gaussBuff);
-            
-            // 步骤2: 双线性插值到指定区域
-            idwBilinear(gaussBuff, THERMALIMAGE_RESOLUTION_WIDTH * 2, THERMALIMAGE_RESOLUTION_HEIGHT * 2, 
-                       TermoHqImage16, img_width, img_height, 10 / 2);
+            // 渲染路径选择：LOW_QUALITY_RENDER -> 使用 nearest-neighbor 快速缩放；否则使用高质量 Gauss + Bilinear
+            if (lowQualityRender) {
+                // 最近邻缩放：把原始 TermoImage16 映射到 TermoHqImage16
+                for (int row = 0; row < img_height; row++) {
+                    int src_row = (row * THERMALIMAGE_RESOLUTION_HEIGHT) / img_height;
+                    if (src_row >= THERMALIMAGE_RESOLUTION_HEIGHT) src_row = THERMALIMAGE_RESOLUTION_HEIGHT - 1;
+                    for (int col = 0; col < img_width; col++) {
+                        int src_col = (col * THERMALIMAGE_RESOLUTION_WIDTH) / img_width;
+                        if (src_col >= THERMALIMAGE_RESOLUTION_WIDTH) src_col = THERMALIMAGE_RESOLUTION_WIDTH - 1;
+                        TermoHqImage16[row * img_width + col] = TermoImage16[src_row * THERMALIMAGE_RESOLUTION_WIDTH + src_col];
+                    }
+                }
+            } else {
+                // 步骤1: 高斯模糊2倍放大
+                idwGauss(TermoImage16, THERMALIMAGE_RESOLUTION_WIDTH, THERMALIMAGE_RESOLUTION_HEIGHT, 2, gaussBuff);
+
+                // 步骤2: 双线性插值到指定区域
+                idwBilinear(gaussBuff, THERMALIMAGE_RESOLUTION_WIDTH * 2, THERMALIMAGE_RESOLUTION_HEIGHT * 2, 
+                           TermoHqImage16, img_width, img_height, 10 / 2);
+            }
             
             // 步骤3: 绘制高质量图像到指定区域
             DrawHQImage(TermoHqImage16, pPaletteImage, paletteSteps, img_x_start, img_y_start, 
