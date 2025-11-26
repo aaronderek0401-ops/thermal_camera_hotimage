@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <float.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include "simple_menu.h"
 #include "settings.h"
 
@@ -273,6 +274,15 @@ static bool paletteSelectMode = false;
 // 温度单位选择模式：true表示当前正在用编码器切换温度单位
 static bool tempUnitSelectMode = false;
 
+// 通道选择模式：true 表示正在选择 X/Y 通道，需要右拨确认退出
+static bool channelSelectMode = false;
+
+// 可移动十字线模式
+static bool crosshairMode = false;         // true 表示正在移动十字线
+static bool crosshairAxisIsY = false;     // 在 crosshairMode 下，false=移动 X (列), true=移动 Y (行)
+static int cross_x = (THERMALIMAGE_RESOLUTION_WIDTH >> 1);
+static int cross_y = (THERMALIMAGE_RESOLUTION_HEIGHT >> 1);
+
 // 图像区域十字线显示状态
 static bool showImageCrosshair = false;
 
@@ -280,6 +290,13 @@ static bool showImageCrosshair = false;
 static bool useFahrenheit = false;
 // 绘图通道：false -> X轴(中心行)，true -> Y轴(中心列)
 static bool plotChannelY = false;
+// 请求立即重绘（即使没有新MLX帧），由输入处理器设置，渲染循环检测并执行一次绘制
+static bool forceRender = false;
+// 临时覆盖消息（短时提示），由输入处理器设置，渲染循环负责绘制并超时清除
+static bool overlay_active = false;
+static char overlay_line1[64] = {0};
+static char overlay_line2[64] = {0};
+static TickType_t overlay_expire_tick = 0;
 
 static void DrawSectionFocus(focus_section_t focus,
                              uint16_t top_bar_h,
@@ -339,8 +356,12 @@ void render_task(void* arg)
                          RENDER_Wheel_Back | RENDER_Wheel_Confirm | RENDER_Wheel_Press |
                          RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Encoder_Press;
         EventBits_t bits = xEventGroupWaitBits(pHandleEventGroup, uxBitsToWaitFor, pdTRUE, pdFALSE, portMAX_DELAY);
-        
-        if ((bits & RENDER_MLX90640_NO0) == RENDER_MLX90640_NO0 || (bits & RENDER_MLX90640_NO1) == RENDER_MLX90640_NO1) {
+
+        bool hasMlx = ((bits & RENDER_MLX90640_NO0) == RENDER_MLX90640_NO0) || ((bits & RENDER_MLX90640_NO1) == RENDER_MLX90640_NO1);
+        bool doRender = hasMlx || forceRender;
+        if (doRender) {
+            // 如果是强制重绘，清除请求标志（下次需要再次请求）
+            forceRender = false;
             perf_start = xTaskGetTickCount();
 
             // 计算实际帧率
@@ -471,15 +492,24 @@ void render_task(void* arg)
             
             // 绘制十字线（如果启用）
             if (showImageCrosshair) {
-                // 计算图像中心位置
-                uint16_t center_x = img_x_start + (img_width / 2);
-                uint16_t center_y = img_y_start + (img_height / 2);
-                
+                // 计算十字线位置。若处于 crosshairMode，使用 cross_x/cross_y；否则使用中心
+                int img_w = img_width;
+                int img_h = img_height;
+                int display_x, display_y;
+                if (crosshairMode) {
+                    // DrawHQImage uses (width - col - 1) + X horizontally inverted mapping
+                    display_x = img_x_start + (img_w - 1) - (cross_x * (img_w - 1) / (THERMALIMAGE_RESOLUTION_WIDTH - 1));
+                    display_y = img_y_start + (cross_y * (img_h - 1) / (THERMALIMAGE_RESOLUTION_HEIGHT - 1));
+                } else {
+                    display_x = img_x_start + (img_w / 2);
+                    display_y = img_y_start + (img_h / 2);
+                }
+
                 // 绘制水平十字线（贯穿整个图像宽度）
-                dispcolor_DrawLine(img_x_start, center_y, img_x_start + img_width - 1, center_y, WHITE);
-                
+                dispcolor_DrawLine(img_x_start, display_y, img_x_start + img_w - 1, display_y, WHITE);
+
                 // 绘制垂直十字线（贯穿整个图像高度）
-                dispcolor_DrawLine(center_x, img_y_start, center_x, img_y_start + img_height - 1, WHITE);
+                dispcolor_DrawLine(display_x, img_y_start, display_x, img_y_start + img_h - 1, WHITE);
             }
             
             perf_render = xTaskGetTickCount();
@@ -527,10 +557,23 @@ void render_task(void* arg)
                         ostd = sqrt(var);
                     }
 
-                    dispcolor_printf(10, 190, FONTID_6X8M, leftColor, "std:%.2f%s", (float)ostd, CELSIUS_SYMBOL);
-                    dispcolor_printf(10, 205, FONTID_6X8M, leftColor, "max:%.1f%s", (float)omax, CELSIUS_SYMBOL);
-                    dispcolor_printf(10, 220, FONTID_6X8M, leftColor, "min:%.1f%s", (float)omin, CELSIUS_SYMBOL);
-                    dispcolor_printf(10, 235, FONTID_6X8M, leftColor, "avg:%.2f%s", (float)oavg, CELSIUS_SYMBOL);
+                    // 如果使用华氏度，转换显示值（注意：标准差按比例放大，不加偏移）
+                    const char* dataUnit = useFahrenheit ? FAHRENHEIT_SYMBOL : CELSIUS_SYMBOL;
+                    double disp_ostd = ostd;
+                    double disp_omax = omax;
+                    double disp_omin = omin;
+                    double disp_oavg = oavg;
+                    if (useFahrenheit) {
+                        disp_ostd = ostd * 9.0 / 5.0;
+                        disp_omax = omax * 9.0 / 5.0 + 32.0;
+                        disp_omin = omin * 9.0 / 5.0 + 32.0;
+                        disp_oavg = oavg * 9.0 / 5.0 + 32.0;
+                    }
+
+                    dispcolor_printf(10, 190, FONTID_6X8M, leftColor, "std:%.2f%s", (float)disp_ostd, dataUnit);
+                    dispcolor_printf(10, 200, FONTID_6X8M, leftColor, "max:%.1f%s", (float)disp_omax, dataUnit);
+                    dispcolor_printf(10, 210, FONTID_6X8M, leftColor, "min:%.1f%s", (float)disp_omin, dataUnit);
+                    dispcolor_printf(10, 220, FONTID_6X8M, leftColor, "avg:%.2f%s", (float)disp_oavg, dataUnit);
                 }
 
                 // 在中间边框内绘制十字线的温度折线图（可在X轴中心行或Y轴中心列之间切换）
@@ -553,10 +596,15 @@ void render_task(void* arg)
                     const int center_row = THERMALIMAGE_RESOLUTION_HEIGHT / 2;
                     const int center_col = THERMALIMAGE_RESOLUTION_WIDTH / 2;
 
-                    if (!plotChannelY) {
-                        // X 通道：使用中心行（水平）
+                    // 如果处于十字线移动模式，则底部折线使用十字线位置和所选轴；否则使用 plotChannelY/中心
+                    bool useYPlot = crosshairMode ? crosshairAxisIsY : plotChannelY;
+                    int target_row = crosshairMode ? cross_y : center_row;
+                    int target_col = crosshairMode ? cross_x : center_col;
+
+                    if (useYPlot) {
+                        // X 通道：使用某一行（水平）
                         for (int col = 0; col < THERMALIMAGE_RESOLUTION_WIDTH; col++) {
-                            float t = frame->ThermoImage[center_row * THERMALIMAGE_RESOLUTION_WIDTH + col];
+                            float t = frame->ThermoImage[target_row * THERMALIMAGE_RESOLUTION_WIDTH + col];
                             if (!isfinite(t)) continue;
 
                             int16_t px = plot_x + (col * plot_w) / (THERMALIMAGE_RESOLUTION_WIDTH - 1);
@@ -572,9 +620,9 @@ void render_task(void* arg)
                             prev_py = py;
                         }
                     } else {
-                        // Y 通道：使用中心列（垂直），沿着行方向绘制到水平绘图区域
+                        // Y 通道：使用某一列（垂直），沿着行方向绘制到水平绘图区域
                         for (int row = 0; row < THERMALIMAGE_RESOLUTION_HEIGHT; row++) {
-                            float t = frame->ThermoImage[row * THERMALIMAGE_RESOLUTION_WIDTH + center_col];
+                            float t = frame->ThermoImage[row * THERMALIMAGE_RESOLUTION_WIDTH + target_col];
                             if (!isfinite(t)) continue;
 
                             int16_t px = plot_x + (row * plot_w) / (THERMALIMAGE_RESOLUTION_HEIGHT - 1);
@@ -608,6 +656,23 @@ void render_task(void* arg)
 
             DrawSectionFocus(currentFocus, top_bar_h, bottom_bar_h, img_y_start, img_height);
             
+            // 在最终提交到LCD之前，如果有overlay提示则绘制
+            if (overlay_active) {
+                TickType_t now = xTaskGetTickCount();
+                if (now < overlay_expire_tick) {
+                    const int16_t msg_x = 140;
+                    const int16_t msg_y = 184;
+                    const int16_t msg_w = dispcolor_getWidth() - msg_x - 8;
+                    const int16_t msg_h = 32;
+                    dispcolor_FillRect(msg_x, msg_y, msg_w, msg_h, BLACK);
+                    if (overlay_line1[0]) dispcolor_printf(msg_x, msg_y, FONTID_6X8M, RGB565(255,128,0), "%s", overlay_line1);
+                    if (overlay_line2[0]) dispcolor_printf(msg_x, msg_y + 14, FONTID_6X8M, RGB565(200,200,200), "%s", overlay_line2);
+                } else {
+                    overlay_active = false;
+                    overlay_line1[0] = 0; overlay_line2[0] = 0;
+                }
+            }
+
             // 更新显示
             st7789_update();
             perf_lcd = xTaskGetTickCount();
@@ -633,10 +698,36 @@ void render_task(void* arg)
         
         // Wheel 右拨：进入子项选择模式，或从子项模式进入菜单/调色板选择/温度单位选择
         if (bits & RENDER_Wheel_Confirm) {
+            // 如果焦点在图像区域且不在子项模式，右拨进入可移动十字线模式
+            if (currentFocus == SECTION_IMAGE && !subItemMode && !crosshairMode) {
+                crosshairMode = true;
+                crosshairAxisIsY = false; // 默认开始调整 X
+                showImageCrosshair = true;
+                // 设置覆盖提示，由渲染循环负责绘制并自动超时
+                snprintf(overlay_line1, sizeof(overlay_line1), "Crosshair mode: %s", (crosshairAxisIsY ? "Y" : "X"));
+                snprintf(overlay_line2, sizeof(overlay_line2), "Enc:move  Right:axis  Left:exit");
+                overlay_active = true;
+                overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(800);
+                forceRender = true;
+                continue;
+            // 如果当前已经处于十字线模式，则右拨切换调整轴（X/Y）
+            } else if (currentFocus == SECTION_IMAGE && crosshairMode) {
+                crosshairAxisIsY = !crosshairAxisIsY;
+                // 提示新的轴方向，由渲染循环绘制
+                snprintf(overlay_line1, sizeof(overlay_line1), "Crosshair axis: %s", (crosshairAxisIsY ? "Y" : "X"));
+                overlay_line2[0] = '\0';
+                overlay_active = true;
+                overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(400);
+                forceRender = true;
+                continue;
+            }
             if (paletteSelectMode) {
                 // 在调色板选择模式，右拨确认并退出
                 settings_write_all();
                 paletteSelectMode = false;
+            } else if (channelSelectMode) {
+                // 在通道选择模式，右拨确认并退出（不持久化，仅退出选择）
+                channelSelectMode = false;
             } else if (tempUnitSelectMode) {
                 // 在温度单位选择模式，右拨确认并退出
                 tempUnitSelectMode = false;
@@ -651,12 +742,15 @@ void render_task(void* arg)
                 } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
                     // 在温度单位子项，进入温度单位选择模式
                     tempUnitSelectMode = true;
+                } else if (currentFocus == SECTION_DATA && currentDataSubSelection == DATA_SUB_RIGHT) {
+                    // 在底部右侧子项，进入通道选择模式，需要右拨确认退出
+                    channelSelectMode = true;
                 } else {
                     // 其他子项，进入菜单
-                    menu_run_simple();
-                    settings_write_all();
-                    dispcolor_ClearScreen();
-                    subItemMode = false;
+                    // menu_run_simple();
+                    // settings_write_all();
+                    // dispcolor_ClearScreen();
+                    // subItemMode = false;
                 }
             }
         }
@@ -684,6 +778,18 @@ void render_task(void* arg)
             } else if (tempUnitSelectMode) {
                 // 退出温度单位选择模式
                 tempUnitSelectMode = false;
+            } else if (channelSelectMode) {
+                // 退出通道选择模式（取消）
+                channelSelectMode = false;
+            } else if (crosshairMode) {
+                // 退出十字线移动模式
+                crosshairMode = false;
+                // 设置短时提示（由渲染任务绘制）
+                snprintf(overlay_line1, sizeof(overlay_line1), "Crosshair exit");
+                overlay_line2[0] = '\0';
+                overlay_active = true;
+                overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(400);
+                forceRender = true;
             } else if (subItemMode) {
                 subItemMode = false;
             } else {
@@ -708,6 +814,21 @@ void render_task(void* arg)
             } else if (tempUnitSelectMode) {
                 // 温度单位选择模式：切换温度单位
                 useFahrenheit = !useFahrenheit;
+            } else if (channelSelectMode) {
+                // 通道选择模式：旋转编码器切换通道
+                plotChannelY = !plotChannelY;
+            } else if (crosshairMode) {
+                // 十字线模式：编码器移动十字线位置（向上=增加索引）
+                if (crosshairAxisIsY) {
+                    if (cross_y < (THERMALIMAGE_RESOLUTION_HEIGHT - 1)) cross_y++;
+                } else {
+                    if (cross_x < (THERMALIMAGE_RESOLUTION_WIDTH - 1)) cross_x++;
+                }
+                // 实时绘制下方折线和十字线提示（如果有最新帧数据）
+                if (pMlxData != NULL) {
+                    // 不在此处直接绘制，由渲染循环统一绘制
+                    forceRender = true;
+                }
             } else if (subItemMode) {
                 // 子项模式：向左切换子项（在右侧子项时改为切换XY通道）
                 if (currentFocus == SECTION_TITLE) {
@@ -735,6 +856,20 @@ void render_task(void* arg)
             } else if (tempUnitSelectMode) {
                 // 温度单位选择模式：切换温度单位
                 useFahrenheit = !useFahrenheit;
+            } else if (channelSelectMode) {
+                // 通道选择模式：旋转编码器切换通道
+                plotChannelY = !plotChannelY;
+            } else if (crosshairMode) {
+                // 十字线模式：编码器移动十字线位置（向下=减少索引）
+                if (crosshairAxisIsY) {
+                    if (cross_y > 0) cross_y--;
+                } else {
+                    if (cross_x > 0) cross_x--;
+                }
+                if (pMlxData != NULL) {
+                    // 请求渲染循环更新显示（不在这里直接绘制）
+                    forceRender = true;
+                }
             } else if (subItemMode) {
                 // 子项模式：向右切换子项（在右侧子项时改为切换XY通道）
                 if (currentFocus == SECTION_TITLE) {
