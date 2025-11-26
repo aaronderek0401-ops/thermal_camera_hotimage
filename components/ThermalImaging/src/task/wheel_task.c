@@ -115,16 +115,23 @@ void wheel_task(void *arg)
     bool do_cali2 = test_adc_cali_init(ADC_UNIT_2, test_atten, &test_adc2_cali_handle);
     if (do_cali2) printf("adc test: ADC2 calibration enabled\n"); else printf("adc test: ADC2 calibration disabled\n");
 
-    // 只读取 ADC2 CH6（对应 IO17）并打印
-    const adc_channel_t target_ch = ADC_CHANNEL_6; // CH6
-    // 电压阈值（mV）
-    const int V_LEFT = 1800;   // 左拨期望 ~1.8V
-    const int V_RIGHT = 1500;  // 右拨期望 ~1.5V
-    const int V_PRESS = 1000;  // 按下期望 ~1.0V
-    const int THRESH_HIGH = (V_LEFT + V_RIGHT) / 2; // 1650
-    const int THRESH_LOW = (V_RIGHT + V_PRESS) / 2; // 1250
+    // 只读取 ADC1 CH0（对应 GPIO1）并打印
+    const adc_channel_t target_ch = ADC_CHANNEL_0; // CH0
+    // 电压阈值（mV）- 根据实测值调整
+    const int V_IDLE = 1777;   // 无操作时基准电压
+    const int V_LEFT = 1650;   // 左拨实测 1650mV
+    const int V_PRESS = 1090;  // 按下实测 1090mV
+    const int V_RIGHT = 760;   // 右拨实测 760mV  
+    
+    // 阈值设置：考虑噪声，使用较大容差
+    const int THRESH_LEFT_LOW = (V_LEFT + V_IDLE) / 2;    // 1714 (检测左拨下限)
+    const int THRESH_PRESS_HIGH = (V_PRESS + V_LEFT) / 2; // 1370 (检测按下上限)
+    const int THRESH_PRESS_LOW = (V_PRESS + V_RIGHT) / 2; // 925  (检测按下下限)
+    const int THRESH_RIGHT_HIGH = (V_RIGHT + V_PRESS) / 2; // 925  (检测右拨上限)
 
     wheel_event_t last_evt = WHEEL_EVENT_NONE;
+    TickType_t last_event_time = 0;
+    const TickType_t debounce_ticks = pdMS_TO_TICKS(200); // 200ms 防抖
 
     // ensure module queue exists
     if (s_wheel_queue == NULL) {
@@ -133,33 +140,41 @@ void wheel_task(void *arg)
     }
 
     while (1) {
-        printf("--- ADC2 CH6 (IO17) reading ---\n");
-        if (test_adc2_handle) {
-            esp_err_t r = adc_oneshot_config_channel(test_adc2_handle, target_ch, &chan_cfg);
+        printf("--- ADC1 CH0 (GPIO1) reading ---\n");
+        if (test_adc1_handle) {
+            esp_err_t r = adc_oneshot_config_channel(test_adc1_handle, target_ch, &chan_cfg);
             if (r == ESP_OK) {
                 int raw = 0;
-                r = adc_oneshot_read(test_adc2_handle, target_ch, &raw);
+                r = adc_oneshot_read(test_adc1_handle, target_ch, &raw);
                 int voltage_mv = -1;
                 if (r == ESP_OK) {
-                    if (test_adc2_cali_handle) {
-                        esp_err_t ret = adc_cali_raw_to_voltage(test_adc2_cali_handle, raw, &voltage_mv);
+                    if (test_adc1_cali_handle) {
+                        esp_err_t ret = adc_cali_raw_to_voltage(test_adc1_cali_handle, raw, &voltage_mv);
                         if (ret != ESP_OK) voltage_mv = -1;
                     }
-                    printf("ADC2 CH6: raw=%d, mV=%d\n", raw, voltage_mv);
+                    printf("ADC1 CH0: raw=%d, mV=%d\n", raw, voltage_mv);
 
-                    // 根据 mV 值判定状态：LEFT / RIGHT / PRESS
+                    // 根据 mV 值判定状态：LEFT / RIGHT / PRESS / IDLE
                     wheel_event_t detected = WHEEL_EVENT_NONE;
-                    if (voltage_mv >= THRESH_HIGH) {
-                        detected = WHEEL_EVENT_LEFT;
-                    } else if (voltage_mv >= THRESH_LOW) {
-                        detected = WHEEL_EVENT_RIGHT;
-                    } else if (voltage_mv >= 0) {
-                        // 低于 THRESH_LOW 视为按下（或其他低电平状态）
+                    if (voltage_mv >= THRESH_LEFT_LOW) {
+                        // >= 1714: 无操作或左拨，进一步判断
+                        if (voltage_mv <= (V_LEFT + 50) && voltage_mv >= (V_LEFT - 50)) {
+                            // 1600~1700: 左拨
+                            detected = WHEEL_EVENT_LEFT;
+                        }
+                        // 否则是空闲状态，不触发事件
+                    } else if (voltage_mv >= THRESH_PRESS_LOW && voltage_mv <= THRESH_PRESS_HIGH) {
+                        // 925~1370: 按下
                         detected = WHEEL_EVENT_PRESS;
+                    } else if (voltage_mv < THRESH_RIGHT_HIGH && voltage_mv >= (V_RIGHT - 50)) {
+                        // < 925 且接近760: 右拨
+                        detected = WHEEL_EVENT_RIGHT;
                     }
 
-                    // 仅在状态变化时发送/打印一次（避免重复刷屏）
-                    if (detected != WHEEL_EVENT_NONE && detected != last_evt) {
+                    // 仅在状态变化时发送/打印一次（避免重复刷屏），并添加防抖
+                    TickType_t now = xTaskGetTickCount();
+                    if (detected != WHEEL_EVENT_NONE && detected != last_evt && 
+                        (now - last_event_time) >= debounce_ticks) {
                         const char *name = "NONE";
                         if (detected == WHEEL_EVENT_LEFT) name = "LEFT (Back)";
                         else if (detected == WHEEL_EVENT_RIGHT) name = "RIGHT (Confirm)";
@@ -179,6 +194,7 @@ void wheel_task(void *arg)
                         wheel_post_event(detected);
                         if (s_wheel_callback) s_wheel_callback(detected);
                         last_evt = detected;
+                        last_event_time = now;
                     }
                 } else {
                     printf("ADC2 CH6 read failed: %s\n", esp_err_to_name(r));

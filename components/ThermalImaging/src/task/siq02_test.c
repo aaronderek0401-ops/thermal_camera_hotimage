@@ -10,13 +10,13 @@
 
 // 默认 GPIO（可在 siq02_init 中覆盖）
 #ifndef ENC_GPIO_A
-#define ENC_GPIO_A GPIO_NUM_17
+#define ENC_GPIO_A GPIO_NUM_10
 #endif
 #ifndef ENC_GPIO_B
-#define ENC_GPIO_B GPIO_NUM_18
+#define ENC_GPIO_B GPIO_NUM_12
 #endif
 #ifndef ENC_GPIO_SW
-#define ENC_GPIO_SW GPIO_NUM_8
+#define ENC_GPIO_SW GPIO_NUM_11
 #endif
 
 #define ENC_SAMPLE_PERIOD_MS 2

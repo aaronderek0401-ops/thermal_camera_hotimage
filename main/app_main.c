@@ -44,13 +44,13 @@ void app_main()
     // xTaskCreatePinnedToCore(buttons_task, "buttons", 1024, NULL, 6, NULL, tskNO_AFFINITY);
     xTaskCreatePinnedToCore(mlx90640_task, "mlx90640", 1024 * 10, NULL, 4, NULL, 0);
 
-    // 启动 Wheel (IO17) ADC 测试任务（打印 ADC2 CH6 的 raw 与 mV）
+    // 启动 Wheel (GPIO1) ADC 测试任务（打印 ADC1 CH0 的 raw 与 mV）
     if (wheel_init() == ESP_OK) {
         start_wheel_task();
     } else {
         printf("wheel_init failed\n");
     }
-    // 启动 SIQ-02FVS3 摇杆解析测试任务（X/Y/Press）
+    // 启动 SIQ-02FVS3 旋转编码器任务（GPIO17/18=EC_A/EC_B, GPIO8=SW）
     extern void start_siq02_test(void);
     start_siq02_test();
 
