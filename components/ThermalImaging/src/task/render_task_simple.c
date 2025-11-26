@@ -316,7 +316,7 @@ static void DrawSectionFocus(focus_section_t focus,
     //     dispcolor_DrawCircleFilled(xPos, yPos[i], 4, BLACK);
     // }
 
-    dispcolor_DrawCircleFilled(xPos, yPos[focus], 4, RGB565(255, 255, 0));
+    dispcolor_DrawCircleFilled(xPos, yPos[focus], 3, RGB565(255, 255, 0));
 }
 
 // 渲染任务 - 使用render_task的图像优化方法
@@ -591,11 +591,26 @@ void render_task(void* arg)
                 int display_x = img_x_start + (img_w - 1) - (cross_x * (img_w - 1) / (THERMALIMAGE_RESOLUTION_WIDTH - 1));
                 int display_y = img_y_start + (cross_y * (img_h - 1) / (THERMALIMAGE_RESOLUTION_HEIGHT - 1));
 
-                // 绘制水平十字线（贯穿整个图像宽度）
-                dispcolor_DrawLine(img_x_start, display_y, img_x_start + img_w - 1, display_y, WHITE);
+                // 在十字线调整模式下，正在调整的轴用白色，另一轴用深灰色以便区分
+                uint16_t colorX = WHITE;  // 垂直线（调整 X 坐标）
+                uint16_t colorY = WHITE;  // 水平线（调整 Y 坐标）
+                if (crosshairMode) {
+                    if (crosshairAxisIsY) {
+                        // 正在调整 Y 轴，Y 轴（水平线）高亮，X 轴（垂直线）变暗
+                        colorX = RGB565(60, 60, 60);
+                        colorY = WHITE;
+                    } else {
+                        // 正在调整 X 轴，X 轴（垂直线）高亮，Y 轴（水平线）变暗
+                        colorX = WHITE;
+                        colorY = RGB565(60, 60, 60);
+                    }
+                }
 
-                // 绘制垂直十字线（贯穿整个图像高度）
-                dispcolor_DrawLine(display_x, img_y_start, display_x, img_y_start + img_h - 1, WHITE);
+                // 绘制水平十字线（贯穿整个图像宽度）- 对应 Y 轴
+                dispcolor_DrawLine(img_x_start, display_y, img_x_start + img_w - 1, display_y, colorY);
+
+                // 绘制垂直十字线（贯穿整个图像高度）- 对应 X 轴
+                dispcolor_DrawLine(display_x, img_y_start, display_x, img_y_start + img_h - 1, colorX);
             }
             
             perf_render = xTaskGetTickCount();
@@ -867,22 +882,12 @@ void render_task(void* arg)
         //     }
         // }
         
-        // Wheel 左拨：退出调色板选择/温度单位选择/子项模式，返回焦点区域切换
+        // Wheel 左拨：退出当前模式返回上一层，或从焦点模式进入菜单
+        // 层级关系：调节模式(palette/tempUnit/channel) -> 子项模式 -> 焦点模式 -> 菜单
         if (bits & RENDER_Wheel_Back) {
-            if (paletteSelectMode) {
-                // 退出调色板选择模式（不保存）
-                paletteSelectMode = false;
-            } else if (tempUnitSelectMode) {
-                // 退出温度单位选择模式
-                tempUnitSelectMode = false;
-            } else if (channelSelectMode) {
-                // 退出通道选择模式（取消）
-                channelSelectMode = false;
-            } else if (crosshairMode) {
-                // 退出十字线移动模式
+            if (crosshairMode) {
+                // 退出十字线移动模式（特殊：不在子项层级中）
                 crosshairMode = false;
-                // 设置短时提示（由渲染任务绘制）
-                // snprintf(overlay_line1, sizeof(overlay_line1), "Crosshair exit");
                 overlay_line2[0] = '\0';
                 overlay_active = true;
                 overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(400);
@@ -891,15 +896,17 @@ void render_task(void* arg)
                 settingsParms.CrossX = (uint8_t)cross_x;
                 settingsParms.CrossY = (uint8_t)cross_y;
                 settings_write_all();
-            } else if (subItemMode) {
+            } else if (paletteSelectMode || tempUnitSelectMode || channelSelectMode || subItemMode) {
+                // 从任何子项相关模式统一退出到焦点模式
+                paletteSelectMode = false;
+                tempUnitSelectMode = false;
+                channelSelectMode = false;
                 subItemMode = false;
             } else {
-                // 已在焦点模式，可以重置到默认
-                // currentFocus = SECTION_IMAGE;
+                // 已在焦点模式，进入菜单
                 menu_run_simple();
                 settings_write_all();
                 dispcolor_ClearScreen();
-                subItemMode = false;
             }
         }
         

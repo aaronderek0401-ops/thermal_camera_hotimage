@@ -93,7 +93,7 @@ int menu_run_simple(void)
             int16_t dot_y = y0 + (y1 - y0) / 2;
             if (i == selected) {
                 uint16_t dotColor = RGB565(255, 255, 0);
-                dispcolor_DrawCircleFilled(dot_x, dot_y, 4, dotColor);
+                dispcolor_DrawCircleFilled(dot_x, dot_y, 3, dotColor);
             } else {
                 // 清除任何旧的点
                 dispcolor_DrawRectangleFilled(dot_x - 5, dot_y - 5, dot_x + 5, dot_y + 5, BLACK);
@@ -174,7 +174,9 @@ int menu_run_simple(void)
                         done = true;
                     }
                     if (bits2 & RENDER_Wheel_Back) {
-                        done = true; // cancel
+                        // cancel: clear adjustment area before returning to main menu
+                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                        done = true;
                     }
                 }
             } break;
@@ -211,7 +213,9 @@ int menu_run_simple(void)
                         done = true;
                     }
                     if (bits2 & RENDER_Wheel_Back) {
-                        done = true; // cancel
+                        // cancel: clear adjustment area before returning to main menu
+                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                        done = true;
                     }
                 }
             } break;
@@ -250,7 +254,9 @@ int menu_run_simple(void)
                         done = true;
                     }
                     if (bits2 & RENDER_Wheel_Back) {
-                        done = true; // cancel
+                        // cancel: clear adjustment area before returning to main menu
+                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                        done = true;
                     }
                 }
             } break;
