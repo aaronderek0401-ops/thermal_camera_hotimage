@@ -91,6 +91,8 @@ typedef struct
     eButtonFunc FuncCenter; // 按钮Center 类型
     eButtonFunc FuncDown; // 按钮Down 类型
     uint8_t RealTimeAnalysis; // 是否显示热成像实时界面下方的数据分析
+    uint8_t CrossX; // 十字线 x 坐标（0..THERMALIMAGE_RESOLUTION_WIDTH-1）
+    uint8_t CrossY; // 十字线 y 坐标（0..THERMALIMAGE_RESOLUTION_HEIGHT-1）
 } structSettingsParms;
 
 extern structSettingsParms settingsParms;

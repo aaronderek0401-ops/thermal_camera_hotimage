@@ -25,6 +25,9 @@ structSettingsParms settingsParms = {
     FuncCenter : Save_BMP16,
     FuncDown : Scale_Prev,
     RealTimeAnalysis : 1,
+    // 默认十字线位置为中心
+    CrossX : (THERMALIMAGE_RESOLUTION_WIDTH >> 1),
+    CrossY : (THERMALIMAGE_RESOLUTION_HEIGHT >> 1),
 
 };
 
@@ -230,6 +233,12 @@ int settings_read_all(void)
     if (err != ESP_OK)
         return err;
 
+    // 读取持久化的十字线位置（如果存在）
+    err = setting_read("CrossX", uint8, &settingsParms.CrossX);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
+    err = setting_read("CrossY", uint8, &settingsParms.CrossY);
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) return err;
+
     return 0;
 }
 
@@ -299,6 +308,12 @@ int settings_write_all(void)
     err = setting_write("FuncDown", uint8, &settingsParms.FuncDown);
     if (err != ESP_OK)
         return err;
+
+    // 保存十字线位置
+    err = setting_write("CrossX", uint8, &settingsParms.CrossX);
+    if (err != ESP_OK) return err;
+    err = setting_write("CrossY", uint8, &settingsParms.CrossY);
+    if (err != ESP_OK) return err;
 
     return settings_commit();
 }

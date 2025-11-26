@@ -280,6 +280,8 @@ static bool channelSelectMode = false;
 // 可移动十字线模式
 static bool crosshairMode = false;         // true 表示正在移动十字线
 static bool crosshairAxisIsY = false;     // 在 crosshairMode 下，false=移动 X (列), true=移动 Y (行)
+// 十字线坐标（列/行）。初始化为中心，但不会在退出/重新进入模式时自动复位，
+// 用户调节后保持最后一次手动设置的位置，渲染循环直接使用这个位置。
 static int cross_x = (THERMALIMAGE_RESOLUTION_WIDTH >> 1);
 static int cross_y = (THERMALIMAGE_RESOLUTION_HEIGHT >> 1);
 
@@ -346,6 +348,10 @@ void render_task(void* arg)
     
     // 等待MLX90640初始化完成
     vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+    // 从持久化设置中恢复十字线位置（如果设置里有的话）
+    cross_x = settingsParms.CrossX;
+    cross_y = settingsParms.CrossY;
 
     // 主循环
     while (1) {
@@ -492,18 +498,12 @@ void render_task(void* arg)
             
             // 绘制十字线（如果启用）
             if (showImageCrosshair) {
-                // 计算十字线位置。若处于 crosshairMode，使用 cross_x/cross_y；否则使用中心
+                // 计算十字线位置：始终使用 cross_x/cross_y（即使退出 crosshairMode 也保持手动调节的位置）
                 int img_w = img_width;
                 int img_h = img_height;
-                int display_x, display_y;
-                if (crosshairMode) {
-                    // DrawHQImage uses (width - col - 1) + X horizontally inverted mapping
-                    display_x = img_x_start + (img_w - 1) - (cross_x * (img_w - 1) / (THERMALIMAGE_RESOLUTION_WIDTH - 1));
-                    display_y = img_y_start + (cross_y * (img_h - 1) / (THERMALIMAGE_RESOLUTION_HEIGHT - 1));
-                } else {
-                    display_x = img_x_start + (img_w / 2);
-                    display_y = img_y_start + (img_h / 2);
-                }
+                // DrawHQImage uses (width - col - 1) + X horizontally inverted mapping
+                int display_x = img_x_start + (img_w - 1) - (cross_x * (img_w - 1) / (THERMALIMAGE_RESOLUTION_WIDTH - 1));
+                int display_y = img_y_start + (cross_y * (img_h - 1) / (THERMALIMAGE_RESOLUTION_HEIGHT - 1));
 
                 // 绘制水平十字线（贯穿整个图像宽度）
                 dispcolor_DrawLine(img_x_start, display_y, img_x_start + img_w - 1, display_y, WHITE);
@@ -596,12 +596,13 @@ void render_task(void* arg)
                     const int center_row = THERMALIMAGE_RESOLUTION_HEIGHT / 2;
                     const int center_col = THERMALIMAGE_RESOLUTION_WIDTH / 2;
 
-                    // 如果处于十字线移动模式，则底部折线使用十字线位置和所选轴；否则使用 plotChannelY/中心
-                    bool useYPlot = crosshairMode ? crosshairAxisIsY : plotChannelY;
-                    int target_row = crosshairMode ? cross_y : center_row;
-                    int target_col = crosshairMode ? cross_x : center_col;
+                    // 折线图通道严格由底部数据区域的通道选择决定（plotChannelY）
+                    // 位置（哪一行/列）始终使用十字线位置 cross_x/cross_y（即使退出 crosshairMode 也保持手动调节的位置）
+                    bool useYPlot = plotChannelY;
+                    int target_row = cross_y;
+                    int target_col = cross_x;
 
-                    if (useYPlot) {
+                    if (!useYPlot) {
                         // X 通道：使用某一行（水平）
                         for (int col = 0; col < THERMALIMAGE_RESOLUTION_WIDTH; col++) {
                             float t = frame->ThermoImage[target_row * THERMALIMAGE_RESOLUTION_WIDTH + col];
@@ -785,11 +786,15 @@ void render_task(void* arg)
                 // 退出十字线移动模式
                 crosshairMode = false;
                 // 设置短时提示（由渲染任务绘制）
-                snprintf(overlay_line1, sizeof(overlay_line1), "Crosshair exit");
+                // snprintf(overlay_line1, sizeof(overlay_line1), "Crosshair exit");
                 overlay_line2[0] = '\0';
                 overlay_active = true;
                 overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(400);
                 forceRender = true;
+                // 保存十字线位置到持久化设置
+                settingsParms.CrossX = (uint8_t)cross_x;
+                settingsParms.CrossY = (uint8_t)cross_y;
+                settings_write_all();
             } else if (subItemMode) {
                 subItemMode = false;
             } else {
