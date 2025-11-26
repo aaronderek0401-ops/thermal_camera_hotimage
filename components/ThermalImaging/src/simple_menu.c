@@ -142,7 +142,10 @@ int menu_run_simple(void)
                 // Interactive adjust loop for min temp
                 float v = settingsParms.minTempNew;
                 bool done = false;
-                // draw prompt area
+                // clear the menu list area to avoid interference and draw prompt area
+                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                // redraw title
+                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
                 while (!done) {
                     dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
                     dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set Min Temp: %.1f%s", v, CELSIUS_SYMBOL);
@@ -179,6 +182,10 @@ int menu_run_simple(void)
                 // Interactive adjust loop for palette center percent (0-100)
                 uint8_t v = settingsParms.PaletteCenterPercent;
                 bool done = false;
+                // clear the menu list area to avoid interference and draw prompt area
+                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                // redraw title
+                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
                 while (!done) {
                     dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
                     dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Palette Center: %d%%", v);
@@ -212,6 +219,10 @@ int menu_run_simple(void)
                 // Interactive adjust loop for max temp
                 float v = settingsParms.maxTempNew;
                 bool done = false;
+                // clear the menu list area to avoid interference and draw prompt area
+                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                // redraw title
+                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
                 while (!done) {
                     dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
                     dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set Max Temp: %.1f%s", v, CELSIUS_SYMBOL);

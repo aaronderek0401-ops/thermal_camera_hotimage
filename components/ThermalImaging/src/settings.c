@@ -24,6 +24,8 @@ structSettingsParms settingsParms = {
     FuncUp : Markers_OnOff,
     FuncCenter : Save_BMP16,
     FuncDown : Scale_Prev,
+    RealTimeAnalysis : 1,
+
 };
 
 // 设置存储 初始化
