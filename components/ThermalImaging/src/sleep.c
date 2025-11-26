@@ -2,6 +2,7 @@
 #include "dispcolor.h"
 #include "st7789.h"
 #include "driver/rtc_io.h"
+#include "driver/gpio.h"
 // #include "esp32/ulp.h"
 #include "esp_log.h"
 #include "esp_sleep.h"
@@ -119,6 +120,7 @@ static void sleep_watcher_task(void* arg)
 
 void system_enter_sleep(void)
 {
+    // keep existing light-sleep style behaviour for quick suspend
     if (s_sleepMode) return;
     s_sleepMode = true;
 
@@ -129,7 +131,7 @@ void system_enter_sleep(void)
     dispcolor_SetBrightness(0);
     dispcolor_DisplayOff();
 
-    // start watcher task to listen for any input to wake
+    // start watcher task to listen for any input to wake (light-sleep style)
     if (s_sleepWatcher == NULL) {
         xTaskCreatePinnedToCore(sleep_watcher_task, "sleep_watcher", 1024, NULL, 5, &s_sleepWatcher, tskNO_AFFINITY);
     }
@@ -153,4 +155,38 @@ void system_exit_sleep(void)
     if (pHandleEventGroup) {
         xEventGroupSetBits(pHandleEventGroup, RENDER_MLX90640_NO0);
     }
+}
+
+// -------------------------------
+// Deep sleep helper
+// -------------------------------
+// Default wake pin (must be RTC-capable). Change if your board uses another pin.
+#ifndef DEEP_SLEEP_WAKE_PIN
+#define DEEP_SLEEP_WAKE_PIN GPIO_NUM_1
+#endif
+
+void system_enter_deep_sleep(void)
+{
+    // prepare for deep sleep: stop sensor, turn off display/backlight
+    setMLX90640IsPause(1);
+    dispcolor_SetBrightness(0);
+    dispcolor_DisplayOff();
+
+    // Ensure wake pin is input with pull-up (so button press pulls low to wake)
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << DEEP_SLEEP_WAKE_PIN);
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    gpio_config(&io_conf);
+
+    // Use ext0 wakeup on the selected RTC-capable pin: wake on low level
+    esp_sleep_enable_ext0_wakeup(DEEP_SLEEP_WAKE_PIN, 0);
+
+    // Optionally isolate some GPIOs to reduce leakage (board-specific)
+    // rtc_gpio_isolate(GPIO_NUM_x);
+
+    // Enter deep sleep; this function does not return
+    esp_deep_sleep_start();
 }

@@ -129,7 +129,7 @@ int menu_run_simple(void)
         }
         if ((bits & RENDER_Wheel_Back) == RENDER_Wheel_Back) {
             // Wheel left in the main menu enters sleep mode
-            system_enter_sleep();
+            system_enter_deep_sleep();
             exit = true; // leave menu while device sleeps
             continue;
         }
