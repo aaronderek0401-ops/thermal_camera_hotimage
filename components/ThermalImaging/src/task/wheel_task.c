@@ -155,21 +155,21 @@ void wheel_task(void *arg)
                     printf("ADC1 CH0: raw=%d, mV=%d\n", raw, voltage_mv);
 
                     // 根据 mV 值判定状态：LEFT / RIGHT / PRESS / IDLE
+                    // 使用明确的区间匹配，避免阈值互相冲突导致 1650mV 被忽略
                     wheel_event_t detected = WHEEL_EVENT_NONE;
-                    if (voltage_mv >= THRESH_LEFT_LOW) {
-                        // >= 1714: 无操作或左拨，进一步判断
-                        if (voltage_mv <= (V_LEFT + 50) && voltage_mv >= (V_LEFT - 50)) {
-                            // 1600~1700: 左拨
-                            detected = WHEEL_EVENT_LEFT;
-                        }
-                        // 否则是空闲状态，不触发事件
-                    } else if (voltage_mv >= THRESH_PRESS_LOW && voltage_mv <= THRESH_PRESS_HIGH) {
-                        // 925~1370: 按下
+                    // LEFT: V_LEFT +/- 75 (1650 -> 1575..1725)
+                    if (voltage_mv >= (V_LEFT - 75) && voltage_mv <= (V_LEFT + 75)) {
+                        detected = WHEEL_EVENT_LEFT;
+                    }
+                    // PRESS: V_PRESS +/- 200 (1090 -> 890..1290)
+                    else if (voltage_mv >= (V_PRESS - 200) && voltage_mv <= (V_PRESS + 200)) {
                         detected = WHEEL_EVENT_PRESS;
-                    } else if (voltage_mv < THRESH_RIGHT_HIGH && voltage_mv >= (V_RIGHT - 50)) {
-                        // < 925 且接近760: 右拨
+                    }
+                    // RIGHT: V_RIGHT +/- 100 (760 -> 660..860)
+                    else if (voltage_mv >= (V_RIGHT - 100) && voltage_mv <= (V_RIGHT + 100)) {
                         detected = WHEEL_EVENT_RIGHT;
                     }
+                    // 其它值视为 idle/无操作
 
                     // 如果没有检测到动作，但电压在空闲区间，则重置 last_evt（允许下次相同动作被识别）
                     if (detected == WHEEL_EVENT_NONE) {

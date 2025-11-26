@@ -278,6 +278,8 @@ static bool showImageCrosshair = false;
 
 // 温度单位：true为华氏度，false为摄氏度
 static bool useFahrenheit = false;
+// 绘图通道：false -> X轴(中心行)，true -> Y轴(中心列)
+static bool plotChannelY = false;
 
 static void DrawSectionFocus(focus_section_t focus,
                              uint16_t top_bar_h,
@@ -410,7 +412,7 @@ void render_task(void* arg)
             int16_t title_y = (int16_t)((top_bar_h - titleFontH) / 2);
             if (title_y < 0) title_y = 0;
             // dispcolor_DrawString(10, title_y, FONTID_16F, (uint8_t*)"Thermal Camera", WHITE);
-            int16_t title_x = dispcolor_getStrWidth(FONTID_16F, "BOM_FRUIT");
+            int16_t title_x = dispcolor_getStrWidth(FONTID_16F, "Palette 5");
             int16_t title_x2 = dispcolor_getStrWidth(FONTID_16F, "BOM");
 
             title_x = (dispcolor_getWidth() - title_x) / 2;
@@ -434,7 +436,7 @@ void render_task(void* arg)
             const char* tempUnitText = useFahrenheit ? FAHRENHEIT_SYMBOL : CELSIUS_SYMBOL;
             int16_t tempUnitWidth = dispcolor_getStrWidth(FONTID_16F, tempUnitText);
             
-            dispcolor_DrawString(title_x, title_y, FONTID_16F, (uint8_t*)"auto_save", centerTitleColor);
+            dispcolor_DrawString(title_x+10, title_y, FONTID_16F, (uint8_t*)"auto_save", centerTitleColor);
             // Show palette index same as simple menu (less verbose)
             dispcolor_printf(10, title_y, FONTID_16F, leftTitleColor, "Palette %d", settingsParms.ColorScale);
             dispcolor_DrawString(230-tempUnitWidth, title_y, FONTID_16F, (uint8_t*)tempUnitText, rightTitleColor);
@@ -531,23 +533,72 @@ void render_task(void* arg)
                     dispcolor_printf(10, 235, FONTID_6X8M, leftColor, "avg:%.2f%s", (float)oavg, CELSIUS_SYMBOL);
                 }
 
-                // 在中间边框内显示实际 FPS
+                // 在中间边框内绘制十字线的温度折线图（可在X轴中心行或Y轴中心列之间切换）
                 dispcolor_DrawRectangle(75, 190, 165, 235, centerColor); // 边框
                 {
-                    char fpsStr[32];
-                    sprintf(fpsStr, "FPS:%.1f", actual_fps);
-                    int16_t strW = dispcolor_getStrWidth(FONTID_6X8M, fpsStr);
-                    int16_t rect_cx = (75 + 165) / 2;
-                    int16_t rect_cy = (190 + 235) / 2;
-                    dispcolor_printf(rect_cx - (strW >> 1), rect_cy - 4, FONTID_6X8M, centerColor, "%s", fpsStr);
+                    const int16_t box_x1 = 75, box_y1 = 190, box_x2 = 165, box_y2 = 235;
+                    const int16_t plot_margin = 2;
+                    const int16_t plot_x = box_x1 + plot_margin;
+                    const int16_t plot_y = box_y1 + plot_margin;
+                    const int16_t plot_w = (box_x2 - box_x1) - 2 * plot_margin;
+                    const int16_t plot_h = (box_y2 - box_y1) - 2 * plot_margin;
+
+                    // 使用当前显示范围作为 Y 轴范围
+                    float plot_min = minTemp;
+                    float plot_max = maxTemp;
+                    float plot_range = plot_max - plot_min;
+                    if (plot_range < 0.1f) plot_range = 1.0f;
+
+                    int16_t prev_px = -1, prev_py = -1;
+                    const int center_row = THERMALIMAGE_RESOLUTION_HEIGHT / 2;
+                    const int center_col = THERMALIMAGE_RESOLUTION_WIDTH / 2;
+
+                    if (!plotChannelY) {
+                        // X 通道：使用中心行（水平）
+                        for (int col = 0; col < THERMALIMAGE_RESOLUTION_WIDTH; col++) {
+                            float t = frame->ThermoImage[center_row * THERMALIMAGE_RESOLUTION_WIDTH + col];
+                            if (!isfinite(t)) continue;
+
+                            int16_t px = plot_x + (col * plot_w) / (THERMALIMAGE_RESOLUTION_WIDTH - 1);
+                            float norm = (t - plot_min) / plot_range;
+                            if (norm < 0.0f) norm = 0.0f;
+                            if (norm > 1.0f) norm = 1.0f;
+                            int16_t py = plot_y + plot_h - 1 - (int16_t)(norm * (plot_h - 1));
+
+                            if (prev_px >= 0) {
+                                dispcolor_DrawLine(prev_px, prev_py, px, py, RGB565(0, 255, 128));
+                            }
+                            prev_px = px;
+                            prev_py = py;
+                        }
+                    } else {
+                        // Y 通道：使用中心列（垂直），沿着行方向绘制到水平绘图区域
+                        for (int row = 0; row < THERMALIMAGE_RESOLUTION_HEIGHT; row++) {
+                            float t = frame->ThermoImage[row * THERMALIMAGE_RESOLUTION_WIDTH + center_col];
+                            if (!isfinite(t)) continue;
+
+                            int16_t px = plot_x + (row * plot_w) / (THERMALIMAGE_RESOLUTION_HEIGHT - 1);
+                            float norm = (t - plot_min) / plot_range;
+                            if (norm < 0.0f) norm = 0.0f;
+                            if (norm > 1.0f) norm = 1.0f;
+                            int16_t py = plot_y + plot_h - 1 - (int16_t)(norm * (plot_h - 1));
+
+                            if (prev_px >= 0) {
+                                dispcolor_DrawLine(prev_px, prev_py, px, py, RGB565(0, 255, 128));
+                            }
+                            prev_px = px;
+                            prev_py = py;
+                        }
+                    }
+
+                    // 在右下角显示 FPS（小字）
+                    char fpsStr[16];
+                    sprintf(fpsStr, "%.0f", actual_fps);
+                    dispcolor_printf(box_x2 - 28, box_y2 - 10, FONTID_6X8M, centerColor, "%s", fpsStr);
                 }
 
-                // 右侧显示：是否自动刻度、上量程和下量程（使用当前显示范围）
-                if (settingsParms.AutoScaleMode) {
-                    dispcolor_printf(170, 190, FONTID_6X8M, rightColor, "Auto:ON");
-                } else {
-                    dispcolor_printf(170, 190, FONTID_6X8M, rightColor, "Auto:OFF");
-                }
+                // 右侧显示：通道选择（X/Y）以及上量程和下量程
+                dispcolor_printf(170, 190, FONTID_6X8M, rightColor, "Chan:%c", (plotChannelY ? 'Y' : 'X'));
                 dispcolor_printf(170, 210, FONTID_6X8M, rightColor, "Hi:%.1f", maxTemp);
                 dispcolor_printf(170, 230, FONTID_6X8M, rightColor, "Lo:%.1f", minTemp);
             } else {
@@ -611,19 +662,19 @@ void render_task(void* arg)
         }
         
         // Wheel 按下：直接进入菜单
-        if (bits & RENDER_Wheel_Press) {
-            if (paletteSelectMode) {
-                settings_write_all();
-                paletteSelectMode = false;
-            } else if (tempUnitSelectMode) {
-                tempUnitSelectMode = false;
-            } else {
-                menu_run_simple();
-                settings_write_all();
-                dispcolor_ClearScreen();
-                subItemMode = false;
-            }
-        }
+        // if (bits & RENDER_Wheel_Press) {
+        //     if (paletteSelectMode) {
+        //         settings_write_all();
+        //         paletteSelectMode = false;
+        //     } else if (tempUnitSelectMode) {
+        //         tempUnitSelectMode = false;
+        //     } else {
+        //         menu_run_simple();
+        //         settings_write_all();
+        //         dispcolor_ClearScreen();
+        //         subItemMode = false;
+        //     }
+        // }
         
         // Wheel 左拨：退出调色板选择/温度单位选择/子项模式，返回焦点区域切换
         if (bits & RENDER_Wheel_Back) {
@@ -637,7 +688,11 @@ void render_task(void* arg)
                 subItemMode = false;
             } else {
                 // 已在焦点模式，可以重置到默认
-                currentFocus = SECTION_IMAGE;
+                // currentFocus = SECTION_IMAGE;
+                menu_run_simple();
+                settings_write_all();
+                dispcolor_ClearScreen();
+                subItemMode = false;
             }
         }
         
@@ -654,11 +709,16 @@ void render_task(void* arg)
                 // 温度单位选择模式：切换温度单位
                 useFahrenheit = !useFahrenheit;
             } else if (subItemMode) {
-                // 子项模式：向左切换子项
+                // 子项模式：向左切换子项（在右侧子项时改为切换XY通道）
                 if (currentFocus == SECTION_TITLE) {
                     currentTitleSubSelection = (currentTitleSubSelection == 0) ? (TITLE_SUB_COUNT - 1) : (currentTitleSubSelection - 1);
                 } else if (currentFocus == SECTION_DATA) {
-                    currentDataSubSelection = (currentDataSubSelection == 0) ? (DATA_SUB_COUNT - 1) : (currentDataSubSelection - 1);
+                    if (currentDataSubSelection == DATA_SUB_RIGHT) {
+                        // 在右侧子项，旋转编码器切换通道
+                        plotChannelY = !plotChannelY;
+                    } else {
+                        currentDataSubSelection = (currentDataSubSelection == 0) ? (DATA_SUB_COUNT - 1) : (currentDataSubSelection - 1);
+                    }
                 }
                 // 图像区域暂无子项
             } else {
@@ -676,11 +736,16 @@ void render_task(void* arg)
                 // 温度单位选择模式：切换温度单位
                 useFahrenheit = !useFahrenheit;
             } else if (subItemMode) {
-                // 子项模式：向右切换子项
+                // 子项模式：向右切换子项（在右侧子项时改为切换XY通道）
                 if (currentFocus == SECTION_TITLE) {
                     currentTitleSubSelection = (currentTitleSubSelection + 1) % TITLE_SUB_COUNT;
                 } else if (currentFocus == SECTION_DATA) {
-                    currentDataSubSelection = (currentDataSubSelection + 1) % DATA_SUB_COUNT;
+                    if (currentDataSubSelection == DATA_SUB_RIGHT) {
+                        // 在右侧子项，旋转编码器切换通道
+                        plotChannelY = !plotChannelY;
+                    } else {
+                        currentDataSubSelection = (currentDataSubSelection + 1) % DATA_SUB_COUNT;
+                    }
                 }
                 // 图像区域暂无子项
             } else {
