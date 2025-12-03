@@ -22,15 +22,7 @@
 
 // Runtime flag to enable low-quality rendering (set from menu when switching to 32Hz)
 bool lowQualityRender = false;
-// request flag used by render loop; declared here so helper functions can set it
-static bool forceRender = false;
 
-// render_request_force: called by power manager to request an immediate redraw
-void render_request_force(void)
-{
-    // set the file-local flag used by the render loop
-    forceRender = true;
-}
 
 
 static bool compute_temp_range(const sMlxData* frame, float* minTemp, float* maxTemp)
@@ -308,6 +300,7 @@ static bool useFahrenheit = false;
 // 绘图通道：false -> X轴(中心行)，true -> Y轴(中心列)
 static bool plotChannelY = false;
 // 请求立即重绘（即使没有新MLX帧），由输入处理器设置，渲染循环检测并执行一次绘制
+static bool forceRender = false;
 // 临时覆盖消息（短时提示），由输入处理器设置，渲染循环负责绘制并超时清除
 static bool overlay_active = false;
 static char overlay_line1[64] = {0};
@@ -320,7 +313,7 @@ static void DrawSectionFocus(focus_section_t focus,
                              uint16_t img_y_start,
                              uint16_t img_height)
 {
-    const int16_t xPos = 8;
+    const int16_t xPos = 4;
     int16_t yPos[SECTION_COUNT];
     yPos[SECTION_TITLE] = top_bar_h / 2;
     yPos[SECTION_IMAGE] = img_y_start + (img_height / 2);
@@ -330,7 +323,7 @@ static void DrawSectionFocus(focus_section_t focus,
     //     dispcolor_DrawCircleFilled(xPos, yPos[i], 4, BLACK);
     // }
 
-    dispcolor_DrawCircleFilled(xPos, yPos[focus], 3, RGB565(255, 255, 0));
+    dispcolor_DrawCircleFilled(xPos, yPos[focus], 2, RGB565(255, 255, 0));
 }
 
 // 渲染任务 - 使用render_task的图像优化方法
@@ -534,39 +527,53 @@ void render_task(void* arg)
 
             title_x = (dispcolor_getWidth() - title_x) / 2;
             
-            // 确定各标题项的颜色
-            // 白色=未选中，蓝色=焦点在此区域，黄色=subItemMode下选中，绿色=正在调节模式
+            // 标题高亮改为背景灰色高亮（字体默认白色）
+            // 在子项选择模式下，将被选中的子项文字改为黑色以便在灰色背景上更加明显
             uint16_t leftTitleColor = WHITE;
             uint16_t centerTitleColor = WHITE;
             uint16_t rightTitleColor = WHITE;
-            
-            if (currentFocus == SECTION_TITLE) {
-                // 焦点在标题区域
-                if (subItemMode) {
-                    // 子项选择模式：当前选中项用黄色，其他用白色
-                    if (currentTitleSubSelection == TITLE_SUB_LEFT) {
-                        leftTitleColor = paletteSelectMode ? RGB565(0, 255, 128) : RGB565(255, 255, 0);
-                    } else if (currentTitleSubSelection == TITLE_SUB_CENTER) {
-                        centerTitleColor = RGB565(255, 255, 0);
-                    } else if (currentTitleSubSelection == TITLE_SUB_RIGHT) {
-                        rightTitleColor = tempUnitSelectMode ? RGB565(0, 255, 128) : RGB565(255, 255, 0);
-                    }
-                } else {
-                    // 焦点模式（未进入子项）：整个区域用蓝色提示
-                    leftTitleColor = RGB565(0, 200, 255);
-                    centerTitleColor = RGB565(0, 200, 255);
-                    rightTitleColor = RGB565(0, 200, 255);
-                }
-            }
-            
+
             // 右侧显示温度单位指示
             const char* tempUnitText = useFahrenheit ? FAHRENHEIT_SYMBOL : CELSIUS_SYMBOL;
             int16_t tempUnitWidth = dispcolor_getStrWidth(FONTID_16F, tempUnitText);
-            
-            dispcolor_DrawString(title_x+10, title_y, FONTID_16F, (uint8_t*)"auto_save", centerTitleColor);
+
+            // 如果焦点在标题区，绘制灰色背景以示高亮；在子项选择模式时只高亮子项
+            if (currentFocus == SECTION_TITLE) {
+                int16_t top_y = 0;
+                int16_t title_h = top_bar_h;
+                if (subItemMode) {
+                    // 计算每个子项的矩形并填充灰色
+                    if (currentTitleSubSelection == TITLE_SUB_LEFT) {
+                        // left area: around x=10, compute text width
+                        leftTitleColor = paletteSelectMode ? BLACK : WHITE;
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "Palette %d", settingsParms.ColorScale);
+                        int16_t w = dispcolor_getStrWidth(FONTID_16F, buf);
+                        dispcolor_FillRect(10, top_y, w + 6, title_h, GRAY);
+                    } else if (currentTitleSubSelection == TITLE_SUB_CENTER) {
+                        // center area: center text location at title_x+10
+                        // centerTitleColor = SelectMode ? BLACK : WHITE;
+                        const char* centerText = "auto_scale";
+                        int16_t w = dispcolor_getStrWidth(FONTID_16F, (char*)centerText);
+                        int16_t cx = title_x + 10;
+                        dispcolor_FillRect(cx - 2, top_y, w + 4, title_h, GRAY);
+                    } else if (currentTitleSubSelection == TITLE_SUB_RIGHT) {
+                        rightTitleColor = tempUnitSelectMode ? BLACK : WHITE;
+                        // right area: temp unit text at (230-tempUnitWidth)
+                        int16_t rx = 230 - tempUnitWidth - 2;
+                        dispcolor_FillRect(rx, top_y, tempUnitWidth + 2, title_h, GRAY);
+                    }
+                } else {
+                    // 整个标题区域高亮为灰色
+                    dispcolor_FillRect(10, 0, dispcolor_getWidth() - 20, top_bar_h, GRAY);
+                }
+            }
+
+            // 绘制标题文字（字体始终为白色）
+            dispcolor_DrawString(title_x + 10, title_y, FONTID_16F, (uint8_t*)"auto_scale", centerTitleColor);
             // Show palette index same as simple menu (less verbose)
             dispcolor_printf(10, title_y, FONTID_16F, leftTitleColor, "Palette %d", settingsParms.ColorScale);
-            dispcolor_DrawString(230-tempUnitWidth, title_y, FONTID_16F, (uint8_t*)tempUnitText, rightTitleColor);
+            dispcolor_DrawString(230 - tempUnitWidth, title_y, FONTID_16F, (uint8_t*)tempUnitText, rightTitleColor);
 
 
             // 使用高斯模糊+双线性插值优化 - 参考render_task.c的HQ3X_2X模式
@@ -645,28 +652,31 @@ void render_task(void* arg)
             
             if (settingsParms.RealTimeAnalysis) {
                 // 显示温度范围信息和帧率
-                // 确定底部数据区域各项颜色
-                // 白色=未选中，蓝色=焦点在此区域，黄色=subItemMode下选中，绿色=正在调节模式
+                // 改为背景灰色高亮；在子项选择模式下将选中文本改为黑色以便更好识别
                 uint16_t leftColor = WHITE;
                 uint16_t centerColor = WHITE;
                 uint16_t rightColor = WHITE;
-                
+
+                // 如果焦点在底部数据区域，绘制灰色背景框以示高亮；子项选择时只高亮对应子区域
                 if (currentFocus == SECTION_DATA) {
-                    // 焦点在底部数据区域
+                    int16_t bar_top = dispcolor_getHeight() - bottom_bar_h;
+                    int16_t bar_h = bottom_bar_h;
                     if (subItemMode) {
-                        // 子项选择模式：当前选中项用黄色，正在调节用绿色
                         if (currentDataSubSelection == DATA_SUB_LEFT) {
-                            leftColor = RGB565(255, 255, 0);
+                            // 左侧区域高亮（覆盖左侧统计文本区域）
+                            dispcolor_FillRect(10, bar_top, 64, bar_h, GRAY);
                         } else if (currentDataSubSelection == DATA_SUB_CENTER) {
-                            centerColor = RGB565(255, 255, 0);
+                            // 中间绘图区（匹配绘图框 75..165）
+                            dispcolor_FillRect(75, bar_top, 165 - 75 + 1, bar_h, GRAY);
                         } else if (currentDataSubSelection == DATA_SUB_RIGHT) {
-                            rightColor = channelSelectMode ? RGB565(0, 255, 128) : RGB565(255, 255, 0);
+                            // 右侧区域高亮
+                            rightColor = channelSelectMode ? BLACK : WHITE;
+
+                            dispcolor_FillRect(170, bar_top, dispcolor_getWidth() - 170 - 10, bar_h, GRAY);
                         }
                     } else {
-                        // 焦点模式（未进入子项）：整个区域用蓝色提示
-                        leftColor = RGB565(0, 200, 255);
-                        centerColor = RGB565(0, 200, 255);
-                        rightColor = RGB565(0, 200, 255);
+                        // 整个底部区域高亮
+                        dispcolor_FillRect(10, bar_top, dispcolor_getWidth() - 20, bar_h, GRAY);
                     }
                 }
                 

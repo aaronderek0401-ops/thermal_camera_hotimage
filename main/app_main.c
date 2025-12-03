@@ -5,11 +5,30 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <freertos/semphr.h>
+#include "driver/gpio.h"
 #include "wheel.h"
 #include "siq02.h"
 
 EventGroupHandle_t pHandleEventGroup = NULL;
 SemaphoreHandle_t pSPIMutex = NULL;
+
+// 状态指示 LED，引脚使用 GPIO21
+#define LED_PIN GPIO_NUM_21
+
+static void led_blink_task(void* arg)
+{
+    (void)arg;
+    // 配置为输出
+    gpio_reset_pin(LED_PIN);
+    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
+
+    while (1) {
+        gpio_set_level(LED_PIN, 1); // 高电平点亮
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        gpio_set_level(LED_PIN, 0); // 熄灭
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+}
 
 void app_main()
 {
@@ -53,6 +72,9 @@ void app_main()
     // 启动 SIQ-02FVS3 旋转编码器任务（GPIO17/18=EC_A/EC_B, GPIO8=SW）
     extern void start_siq02_test(void);
     start_siq02_test();
+
+    // 启动状态指示 LED 闪烁任务
+    xTaskCreatePinnedToCore(led_blink_task, "led_blink", 1024, NULL, 5, NULL, tskNO_AFFINITY);
 
     while (1) {
         vTaskDelay(60 * 1000 / portTICK_PERIOD_MS);

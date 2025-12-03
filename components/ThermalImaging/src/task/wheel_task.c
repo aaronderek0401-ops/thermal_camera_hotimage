@@ -118,10 +118,10 @@ void wheel_task(void *arg)
     // 只读取 ADC1 CH0（对应 GPIO1）并打印
     const adc_channel_t target_ch = ADC_CHANNEL_0; // CH0
     // 电压阈值（mV）- 根据实测值调整
-    const int V_IDLE = 1777;   // 无操作时基准电压
-    const int V_LEFT = 1650;   // 左拨实测 1650mV
-    const int V_PRESS = 1090;  // 按下实测 1090mV
-    const int V_RIGHT = 760;   // 右拨实测 760mV  
+    const int V_IDLE = 1768;   // 无操作时基准电压
+    const int V_LEFT = 1090;   // 左拨实测 1090mV
+    const int V_PRESS = 760;  // 按下实测 760mV
+    const int V_RIGHT = 1651;   // 右拨实测 1650mV  
     
     // 阈值设置：考虑噪声，使用较大容差
     const int THRESH_LEFT_LOW = (V_LEFT + V_IDLE) / 2;    // 1714 (检测左拨下限)

@@ -106,7 +106,7 @@ int menu_run_simple(void)
             int16_t dot_y = y0 + (y1 - y0) / 2;
             if (i == selected) {
                 uint16_t dotColor = RGB565(255, 255, 0);
-                dispcolor_DrawCircleFilled(dot_x, dot_y, 3, dotColor);
+                dispcolor_DrawCircleFilled(dot_x, dot_y, 2, dotColor);
             } else {
                 // 清除任何旧的点
                 dispcolor_DrawRectangleFilled(dot_x - 5, dot_y - 5, dot_x + 5, dot_y + 5, BLACK);
