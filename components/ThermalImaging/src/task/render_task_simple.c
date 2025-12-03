@@ -237,6 +237,10 @@ static uint32_t frame_count = 0;
 static TickType_t last_fps_time = 0;
 static float actual_fps = 0.0f;
 
+// 保存来自 MLX 帧的原始 min/max（不受显示范围扩展影响），用于用户按确认时固定实际量程
+static float lastFrameMinTemp = 0.0f;
+static float lastFrameMaxTemp = 0.0f;
+
 // 图像缓冲区 - 参考render_task.c的优化
 static int16_t* TermoImage16 = NULL;  // 热成像整数缓冲区（温度*10）
 static int16_t* TermoHqImage16 = NULL; // 高质量插值后的图像
@@ -481,6 +485,9 @@ void render_task(void* arg)
 
             // 计算最大温度、最小温度、中间温度 - 参考render_task.c
             CalcTempFromMLX90640(frame);
+            // 记录原始帧的 min/max（用于按下确认时固定为当前实际量程）
+            lastFrameMinTemp = frame->minT;
+            lastFrameMaxTemp = frame->maxT;
 
             // 使用自动刻度模式或手动模式
             float minTemp, maxTemp;
@@ -570,7 +577,7 @@ void render_task(void* arg)
             }
 
             // 绘制标题文字（字体始终为白色）
-            dispcolor_DrawString(title_x + 10, title_y, FONTID_16F, (uint8_t*)"auto_scale", centerTitleColor);
+            dispcolor_DrawString(title_x + 10, title_y, FONTID_16F, (uint8_t*)"fix_scale", centerTitleColor);
             // Show palette index same as simple menu (less verbose)
             dispcolor_printf(10, title_y, FONTID_16F, leftTitleColor, "Palette %d", settingsParms.ColorScale);
             dispcolor_DrawString(230 - tempUnitWidth, title_y, FONTID_16F, (uint8_t*)tempUnitText, rightTitleColor);
@@ -889,6 +896,20 @@ void render_task(void* arg)
                 if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_LEFT) {
                     // 在palette子项，进入调色板选择模式
                     paletteSelectMode = true;
+                } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_CENTER) {
+                        // 在 auto_scale 子项，按下确认将把当前 MLX 帧的原始 min/max 写入为固定量程并关闭 AutoScale
+                        settingsParms.AutoScaleMode = false;
+                        // 使用帧的原始 min/max（lastFrameMinTemp/lastFrameMaxTemp）而不是 display-adjusted 值
+                        settingsParms.minTempNew = lastFrameMinTemp;
+                        settingsParms.maxTempNew = lastFrameMaxTemp;
+                    settings_write_all();
+                    // 退出子项选择模式并提示
+                    subItemMode = false;
+                    snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale: %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
+                    overlay_line2[0] = '\0';
+                    overlay_active = true;
+                    overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+                    forceRender = true;
                 } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
                     // 在温度单位子项，进入温度单位选择模式
                     tempUnitSelectMode = true;
