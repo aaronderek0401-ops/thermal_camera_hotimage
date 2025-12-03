@@ -1,250 +1,282 @@
+# hot image — Thermal Camera Example
+
+<p align="center">
+  <img src="assets/logo.svg" alt="hot image logo" width="400"/>
+</p>
+
+<p align="center">
+  <b>Platform:</b> ESP32-S3 &nbsp;|&nbsp;
+  <b>Sensor:</b> MLX90640 (32×24 IR array) &nbsp;|&nbsp;
+  <b>Display:</b> ST7789 SPI LCD (240×280)
+</p>
+
+---
+
+## Overview / 项目概述
+
+**English:**
+This project is a real-time thermal camera built on ESP-IDF v5.5. It reads temperature frames from an MLX90640 Far-Infrared sensor via I²C, applies image processing (Gaussian blur + bilinear interpolation), maps temperatures to a false-color palette, and displays the result on an ST7789 SPI LCD. The firmware supports multiple color palettes, adjustable temperature range (AutoScale or fixed), movable crosshair with persistent position, runtime sleep, and true deep sleep with RTC wake.
+
+**中文:**
+本项目是基于 ESP-IDF v5.5 的实时热像仪。通过 I²C 从 MLX90640 远红外传感器读取温度帧，经过图像处理（高斯模糊 + 双线性插值），映射到伪彩色调色板，并在 ST7789 SPI LCD 上显示。固件支持多种调色板、可调温度范围（自动/固定量程）、可移动十字线（位置持久化）、运行时睡眠以及带 RTC 唤醒的真正深度睡眠。
+
+---
+
+## Hardware / 硬件
+
+| Component | Description |
+|-----------|-------------|
+| **MCU** | ESP32-S3 (dual-core Xtensa LX7, 240 MHz, 512KB SRAM, optional PSRAM) |
+| **Thermal Sensor** | MLX90640 32×24 pixel Far-Infrared array (I²C address 0x33, up to 64 Hz) |
+| **Display** | ST7789 SPI LCD, 240×280 pixels, RGB565 |
+| **Encoder** | SIQ-02FVS3 rotary encoder (GPIO17/18 for A/B, GPIO8 for switch) |
+| **Wheel ADC** | Single-axis analog wheel on GPIO1 (ADC1 CH0) |
+| **Status LED** | GPIO21, blinks at boot to indicate power-on |
+| **Deep-sleep wake** | Default GPIO1 (RTC-capable); configurable via `DEEP_SLEEP_WAKE_PIN` |
+
+### Pin Summary (默认引脚)
+
+| Function | GPIO |
+|----------|------|
+| I²C SDA (MLX90640) | Configured in `sdkconfig` (`CONFIG_IIC_IONUM_SDA`) |
+| I²C SCL (MLX90640) | Configured in `sdkconfig` (`CONFIG_IIC_IONUM_SCL`) |
+| SPI MOSI (LCD) | Configured in display driver |
+| SPI CLK (LCD) | Configured in display driver |
+| LCD CS / DC / RST / BL | Configured in `st7789.c` |
+| Encoder A / B / SW | GPIO17 / GPIO18 / GPIO8 |
+| Wheel ADC | GPIO1 (ADC1_CH0) |
+| Status LED | GPIO21 |
+| Deep-sleep wake | GPIO1 (default, RTC-capable) |
+
+---
+
+## Features / 功能特性
+
+### Rendering / 渲染
+
+| Feature | Description |
+|---------|-------------|
+| **High-Quality mode** | 2× Gaussian blur → bilinear interpolation to screen size → palette mapping. Best image quality. |
+| **Low-Quality mode** | Nearest-neighbor upscale (faster, for 32 Hz). Enabled via `lowQualityRender` flag or menu. |
+| **Palette mapping** | Temperature → palette index with adjustable center (`PaletteCenterPercent`). |
+| **Multiple palettes** | Iron, Rainbow, Rainbow2, BlueRed, Black & White, Accuracy Mode. Cycle via menu or UI. |
+
+### Temperature Scaling / 温度量程
+
+| Feature | Description |
+|---------|-------------|
+| **AutoScale** | Dynamically adjusts min/max to each frame's actual range. |
+| **Fixed scale** | User-defined `minTempNew` / `maxTempNew`. Set via menu or by confirming `fix_scale` subitem on main screen. |
+| **MIN_DISPLAY_RANGE** | When AutoScale is on, ensures a minimum span (e.g., 5°C) to avoid extreme palette mapping in uniform scenes. |
+| **Low-range denoising** | Temporal smoothing + optional 3×3 median filter when temperature span is very small. |
+
+### UI / 用户界面
+
+| Element | Description |
+|---------|-------------|
+| **Title bar (top)** | Shows palette name, `auto_scale` / `fix_scale` status, temperature unit (°C / °F). Gray background highlight when focused. |
+| **Thermal image** | Displays processed thermal frame with optional min/max markers (red cross = max, blue X = min). |
+| **Data bar (bottom)** | Shows Max / Min / Center temps, actual FPS, settings shortcuts. Gray background highlight when focused. |
+| **Crosshair** | Movable reticle; position saved to NVS (`CrossX`, `CrossY`). |
+| **Overlay messages** | Temporary on-screen hints (e.g., "Fixed scale saved"). |
+
+### Input / 输入控制
+
+| Input | Action |
+|-------|--------|
+| **Wheel Right / Confirm** | Enter subitem mode, confirm selection, enter crosshair mode in image area |
+| **Wheel Left / Back** | Exit subitem/mode, enter menu from focus mode, save crosshair position |
+| **Encoder Rotate** | Navigate subitems, adjust values (temp range, palette center, brightness) |
+| **Encoder Press** | Context-dependent (e.g., toggle unit, confirm) |
+
+### Power Management / 电源管理
+
+| Mode | Description |
+|------|-------------|
+| **Runtime sleep** | Pauses MLX90640 sampling, turns off display/backlight. Wakes on any input event. |
+| **Deep sleep** | Calls `esp_deep_sleep_start()` with ext0 wake on `DEEP_SLEEP_WAKE_PIN` (GPIO1 default). Device resets on wake. |
+
+### Persistent Settings (NVS) / 持久化设置
+
+All settings are stored in NVS via `settings_write_all()` and loaded at boot via `settings_read_all()`.
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `Emissivity` | float | Object emissivity (0.01–1.0) |
+| `ScaleMode` | enum | Interpolation: Original / Linear / HQ3X_2X |
+| `MLX90640FPS` | uint8 | Refresh rate index (0–7 → 0.5–64 Hz) |
+| `AutoScaleMode` | uint8 | 1 = auto, 0 = fixed |
+| `minTempNew` / `maxTempNew` | float | Fixed temperature range |
+| `ColorScale` | enum | Palette index |
+| `PaletteCenterPercent` | uint8 | Palette midpoint (0–100%) |
+| `LcdBrightness` | int | Backlight level (25–100) |
+| `CrossX` / `CrossY` | uint8 | Crosshair position |
+| `RealTimeAnalysis` | uint8 | Show bottom data bar analysis |
+
+---
+
+## Project Structure / 项目结构
+
+```
+hotimage_code_master/
+├── main/
+│   ├── app_main.c              # Entry point, task creation, LED blink
+│   └── CMakeLists.txt
+├── components/
+│   └── ThermalImaging/
+│       ├── include/
+│       │   ├── settings.h      # Settings struct & NVS API
+│       │   ├── sleep.h         # Sleep/wake API
+│       │   ├── palette.h       # Color palettes
+│       │   └── ...
+│       └── src/
+│           ├── task/
+│           │   └── render_task_simple.c  # Main render loop, UI, input handling
+│           ├── simple_menu.c             # In-app menu
+│           ├── settings.c                # NVS read/write
+│           ├── sleep.c                   # Runtime & deep sleep
+│           ├── lcd/
+│           │   └── st7789.c              # Display driver
+│           ├── mlx90640/                 # Sensor driver
+│           └── ...
+├── assets/
+│   └── logo.svg                # Project logo
+├── partitions.csv
+├── sdkconfig
+└── README.md
+```
 
-	# hot image — Thermal camera example
+---
 
-	<p align="center"> <img src="assets/logo.svg" alt="hot image logo" width="280"/></p>
+## Key Source Files / 关键源文件
 
-	Platform: ESP32-S3 (esp32s3)
+| File | Purpose |
+|------|---------|
+| `main/app_main.c` | Initializes display, I²C, settings, creates FreeRTOS tasks (render, mlx90640, wheel, encoder, LED blink). |
+| `components/.../render_task_simple.c` | Main render loop: reads MLX frames, computes min/max/center, applies denoising, generates HQ image, draws UI, handles input events. |
+| `components/.../simple_menu.c` | Full-screen menu for adjusting AutoScale, min/max temp, palette center, MLX FPS, real-time analysis toggle. |
+| `components/.../settings.c` | NVS storage: `settings_storage_init()`, `settings_read_all()`, `settings_write_all()`. |
+| `components/.../sleep.c` | `system_enter_sleep()` / `system_exit_sleep()` for runtime sleep; `system_enter_deep_sleep()` for true deep sleep with ext0 wake. |
+| `components/.../st7789.c` | ST7789 SPI driver: init, orientation (MADCTL), `st7789_DisplayOn()` / `st7789_DisplayOff()`, backlight control. |
 
-	This is an example thermal camera project based on ESP-IDF using the MLX90640 sensor and an ST7789 SPI display. The README documents recent features, where to find key code, and basic build/run instructions to help you debug and extend the project.
+---
 
-	本项目基于 ESP-IDF，使用 MLX90640 热像传感器和 ST7789 SPI 屏幕。README 列出最近的功能、关键代码位置以及基本的构建/运行说明，方便调试与扩展。
+## Build & Flash / 构建与烧写
 
-	**Key Features (Quick Overview)**
+### Prerequisites / 前提条件
 
-	- Real-time thermal imaging with MLX90640 rendered to an ST7789 SPI display.
-	- Two rendering modes: High-Quality (Gaussian + bilinear) and Low-Quality (nearest-neighbor, lower latency). Low-quality mode is intended for 32Hz operation.
-	- Auto/Manual temperature scaling (AutoScale). The `fix_scale` subitem allows you to write the current frame's min/max to settings and disable AutoScale.
-	- UI improvements: the main title bar and bottom data bar now use a gray background for focus highlighting; selected subitem text becomes black on gray for readability.
-	- Movable crosshair: right-press (wheel confirm) in the image area enters crosshair move mode; position is persisted to settings.
-	- Runtime sleep and deep sleep: runtime sleep pauses sensor and turns off the display/backlight; `system_enter_deep_sleep()` configures RTC wake and calls `esp_deep_sleep_start()` (select an RTC-capable wake pin).
-	- Boot status LED: GPIO21 blinks briefly at power-up.
+- ESP-IDF v5.5 installed and configured
+- ESP32-S3 dev board with MLX90640 and ST7789 connected
+- Serial port identified (e.g., `COM3` on Windows, `/dev/ttyUSB0` on Linux)
 
-	**主要功能（快速概览）**
+### Commands / 命令
 
-	- 实时热像显示（MLX90640）并在 ST7789 SPI 屏幕上输出。
-	- 两种渲染模式：高质量（高斯 + 双线性）与低质量（最近邻，低延时）。低质量模式适用于 32Hz 的高帧率渲染。
-	- 自动/手动量程（AutoScale）。`fix_scale` 子项可以把当前帧的 min/max 写入设置并关闭 AutoScale。
-	- UI 改进：主界面标题栏与底部数据栏使用灰色背景进行焦点高亮；子项选中文本在灰色上显示为黑色以便阅读。
-	- 可移动十字线：在图像区按下旋钮确认进入十字线移动模式；位置会持久化保存到设置。
-	- 运行时睡眠与深度睡眠：运行时睡眠会暂停传感器并关闭屏幕/背光；`system_enter_deep_sleep()` 会配置 RTC 唤醒并调用 `esp_deep_sleep_start()`（需要选择 RTC 支持的唤醒引脚）。
-	- 启动状态灯：GPIO21 在上电时短暂闪烁表示设备已上电。
+```powershell
+# Set target (first time)
+idf.py set-target esp32s3
 
-	**Key Files & Where to Look**
+# Clean build (optional but recommended after major changes)
+idf.py fullclean
 
-	- Main rendering & UI logic: `components/ThermalImaging/src/task/render_task_simple.c`
-		- Contains MIN_DISPLAY_RANGE protection, low-range temporal smoothing + median filter, UI highlighting, and the logic that writes fixed scale when confirming the `fix_scale` subitem.
-	- Menu: `components/ThermalImaging/src/simple_menu.c`
-		- Where MLX FPS (16Hz / 32Hz) options, the low-quality render toggle, and runtime-sleep menu item live (if enabled).
-	- Display driver: `components/ThermalImaging/src/lcd/st7789.c`
-		- Screen on/off helpers (`st7789_DisplayOn` / `st7789_DisplayOff`) and MADCTL (orientation) adjustments.
-	- Sleep management: `components/ThermalImaging/src/sleep.c` and `include/sleep.h`
-		- Runtime sleep/wake and `system_enter_deep_sleep()` (ext0/ext1 config depends on the chosen RTC pin).
-	- Settings (NVS): `components/ThermalImaging/src/settings.c` / `include/settings.h`
-		- `settingsParms` holds `AutoScaleMode`, `minTempNew`, `maxTempNew`, `PaletteCenterPercent`, `ColorScale`, `CrossX`, `CrossY`, etc.
+# Build
+idf.py build
 
-	**常用文件与设置位置**
+# Flash (replace COM3 with your port)
+idf.py -p COM3 flash
 
-	- 主渲染与 UI：`components/ThermalImaging/src/task/render_task_simple.c`
-		- 包含 MIN_DISPLAY_RANGE 保护、低量程时的时间平滑与中值滤波、UI 高亮，以及在 `fix_scale` 子项确认时写入固定量程的逻辑。
-	- 菜单：`components/ThermalImaging/src/simple_menu.c`
-		- MLX FPS（16Hz / 32Hz）、低质量渲染开关，以及运行时睡眠菜单项的位置（如果启用）。
-	- 显示驱动：`components/ThermalImaging/src/lcd/st7789.c`
-		- 屏幕开/关函数（`st7789_DisplayOn` / `st7789_DisplayOff`）以及 MADCTL（方向）设置。
-	- Sleep 管理：`components/ThermalImaging/src/sleep.c` 与 `include/sleep.h`
-		- 运行时睡眠/唤醒与 `system_enter_deep_sleep()`（ext0/ext1 配置需根据所选 RTC 引脚而定）。
-	- 设置持久化 (NVS)：`components/ThermalImaging/src/settings.c` / `include/settings.h`
-		- `settingsParms` 包含 `AutoScaleMode`、`minTempNew`、`maxTempNew`、`PaletteCenterPercent`、`ColorScale`、`CrossX`、`CrossY` 等字段。
+# Monitor serial output
+idf.py -p COM3 monitor
 
-	**Build & Flash (PowerShell)**
+# Build + Flash + Monitor in one step
+idf.py -p COM3 flash monitor
+```
 
-	Build the project:
+---
 
-	```powershell
-	idf.py fullclean
-	idf.py build
-	```
+## Usage / 使用说明
 
-	Flash the firmware (replace `COM3` with your serial port):
+### Main Screen Navigation / 主界面导航
 
-	```powershell
-	idf.py -p COM3 flash
-	```
+1. **Focus sections**: Title bar → Image → Data bar. Use **Wheel Left/Right** to switch focus (yellow dot indicator).
+2. **Subitem mode**: Press **Wheel Confirm** on Title or Data bar to enter subitem selection. Rotate encoder to navigate subitems.
+3. **Crosshair mode**: Press **Wheel Confirm** in Image area to enter crosshair mode. Rotate encoder to move X or Y. Press Confirm again to toggle axis. Press **Wheel Back** to save position and exit.
 
-	Open serial monitor:
+### Menu / 菜单
 
-	```powershell
-	idf.py -p COM3 monitor
-	```
+Press **Wheel Left** from the main screen to open the Simple Menu:
 
-	**运行与调试（PowerShell）**
+| Item | Description |
+|------|-------------|
+| Open Camera | Return to live thermal view |
+| Auto Scale | Toggle On/Off |
+| Min Temp | Adjust lower bound (fixed scale) |
+| Palette Center | Adjust palette midpoint (0–100%) |
+| Max Temp | Adjust upper bound (fixed scale) |
+| MLX FPS | Toggle 16 Hz / 32 Hz (32 Hz enables low-quality render) |
+| Real-time Data Analysis | Toggle bottom data bar |
 
-	构建工程：
+### Fixing the Temperature Range / 固定量程
 
-	```powershell
-	idf.py fullclean
-	idf.py build
-	```
+1. In AutoScale mode, frame the scene you want to capture.
+2. Navigate to the `auto_scale` subitem in the Title bar.
+3. Press **Wheel Confirm**. The current frame's raw min/max will be written to `minTempNew` / `maxTempNew`, AutoScale will be disabled, and settings will be saved.
+4. An overlay message confirms the action.
 
-	烧写固件（请替换为实际串口）：
+### Sleep Modes / 睡眠模式
 
-	```powershell
-	idf.py -p COM3 flash
-	```
+- **Runtime sleep**: Triggered from menu or code. Pauses sensor, dims display. Any input wakes the device.
+- **Deep sleep**: Call `system_enter_deep_sleep()`. Device enters ESP32 deep sleep with ext0 wake on `DEEP_SLEEP_WAKE_PIN`. On wake, the device resets and boots fresh.
 
-	串口监视：
+---
 
-	```powershell
-	idf.py -p COM3 monitor
-	```
+## Configuration / 配置
 
-	**UI Controls (How to use)**
+### Changing Deep-Sleep Wake Pin / 更改深度睡眠唤醒引脚
 
-	- Encoder (wheel):
-		- Wheel Confirm / Right-press:
-			- In the image area: enter crosshair move mode (press again to toggle X/Y axis).
-			- On the `fix_scale` title subitem: confirm writes the current frame's raw min/max into settings and disables AutoScale (persisted by `settings_write_all()`).
-		# hotimage_code_master — Thermal camera example
+Edit `sleep.c`:
 
-		Platform: ESP32-S3 (esp32s3)
+```c
+#ifndef DEEP_SLEEP_WAKE_PIN
+#define DEEP_SLEEP_WAKE_PIN GPIO_NUM_1  // Change to another RTC-capable GPIO
+#endif
+```
 
-		This is an example thermal camera project based on ESP-IDF using the MLX90640 sensor and an ST7789 SPI display. The README documents recent features, where to find key code, and basic build/run instructions to help you debug and extend the project.
+Ensure the chosen GPIO is RTC-capable (on ESP32-S3: GPIO0–21 are RTC GPIOs).
 
-		本项目基于 ESP-IDF，使用 MLX90640 热像传感器和 ST7789 SPI 屏幕。README 列出最近的功能、关键代码位置以及基本的构建/运行说明，方便调试与扩展。
+### Adjusting MIN_DISPLAY_RANGE / 调整最小显示范围
 
-		**Key Features (Quick Overview)**
+In `render_task_simple.c`, find or add:
 
-		- Real-time thermal imaging with MLX90640 rendered to an ST7789 SPI display.
-		- Two rendering modes: High-Quality (Gaussian + bilinear) and Low-Quality (nearest-neighbor, lower latency). Low-quality mode is intended for 32Hz operation.
-		- Auto/Manual temperature scaling (AutoScale). The `fix_scale` subitem allows you to write the current frame's min/max to settings and disable AutoScale.
-		- UI improvements: the main title bar and bottom data bar now use a gray background for focus highlighting; selected subitem text becomes black on gray for readability.
-		- Movable crosshair: right-press (wheel confirm) in the image area enters crosshair move mode; position is persisted to settings.
-		- Runtime sleep and deep sleep: runtime sleep pauses sensor and turns off the display/backlight; `system_enter_deep_sleep()` configures RTC wake and calls `esp_deep_sleep_start()` (select an RTC-capable wake pin).
-		- Boot status LED: GPIO21 blinks briefly at power-up.
+```c
+#define MIN_DISPLAY_RANGE 5.0f  // Minimum temperature span in AutoScale mode
+```
 
-		**主要功能（快速概览）**
+Increase for more stable colors in uniform scenes; decrease for finer detail.
 
-		- 实时热像显示（MLX90640）并在 ST7789 SPI 屏幕上输出。
-		- 两种渲染模式：高质量（高斯 + 双线性）与低质量（最近邻，低延时）。低质量模式适用于 32Hz 的高帧率渲染。
-		- 自动/手动量程（AutoScale）。`fix_scale` 子项可以把当前帧的 min/max 写入设置并关闭 AutoScale。
-		- UI 改进：主界面标题栏与底部数据栏使用灰色背景进行焦点高亮；子项选中文本在灰色上显示为黑色以便阅读。
-		- 可移动十字线：在图像区按下旋钮确认进入十字线移动模式；位置会持久化保存到设置。
-		- 运行时睡眠与深度睡眠：运行时睡眠会暂停传感器并关闭屏幕/背光；`system_enter_deep_sleep()` 会配置 RTC 唤醒并调用 `esp_deep_sleep_start()`（需要选择 RTC 支持的唤醒引脚）。
-		- 启动状态灯：GPIO21 在上电时短暂闪烁表示设备已上电。
+### Adding New Palettes / 添加新调色板
 
-		**Key Files & Where to Look**
+1. Define the palette array in `palette.c` / `palette.h`.
+2. Add an entry to the `eColorScale` enum in `settings.h`.
+3. Update `simple_menu.c` to include the new option.
 
-		- Main rendering & UI logic: `components/ThermalImaging/src/task/render_task_simple.c`
-			- Contains MIN_DISPLAY_RANGE protection, low-range temporal smoothing + median filter, UI highlighting, and the logic that writes fixed scale when confirming the `fix_scale` subitem.
-		- Menu: `components/ThermalImaging/src/simple_menu.c`
-			- Where MLX FPS (16Hz / 32Hz) options, the low-quality render toggle, and runtime-sleep menu item live (if enabled).
-		- Display driver: `components/ThermalImaging/src/lcd/st7789.c`
-			- Screen on/off helpers (`st7789_DisplayOn` / `st7789_DisplayOff`) and MADCTL (orientation) adjustments.
-		- Sleep management: `components/ThermalImaging/src/sleep.c` and `include/sleep.h`
-			- Runtime sleep/wake and `system_enter_deep_sleep()` (ext0/ext1 config depends on the chosen RTC pin).
-		- Settings (NVS): `components/ThermalImaging/src/settings.c` / `include/settings.h`
-			- `settingsParms` holds `AutoScaleMode`, `minTempNew`, `maxTempNew`, `PaletteCenterPercent`, `ColorScale`, `CrossX`, `CrossY`, etc.
+---
 
-		**常用文件与设置位置**
+## Troubleshooting / 故障排除
 
-		- 主渲染与 UI：`components/ThermalImaging/src/task/render_task_simple.c`
-			- 包含 MIN_DISPLAY_RANGE 保护、低量程时的时间平滑与中值滤波、UI 高亮，以及在 `fix_scale` 子项确认时写入固定量程的逻辑。
-		- 菜单：`components/ThermalImaging/src/simple_menu.c`
-			- MLX FPS（16Hz / 32Hz）、低质量渲染开关，以及运行时睡眠菜单项的位置（如果启用）。
-		- 显示驱动：`components/ThermalImaging/src/lcd/st7789.c`
-			- 屏幕开/关函数（`st7789_DisplayOn` / `st7789_DisplayOff`）以及 MADCTL（方向）设置。
-		- Sleep 管理：`components/ThermalImaging/src/sleep.c` 与 `include/sleep.h`
-			- 运行时睡眠/唤醒与 `system_enter_deep_sleep()`（ext0/ext1 配置需根据所选 RTC 引脚而定）。
-		- 设置持久化 (NVS)：`components/ThermalImaging/src/settings.c` / `include/settings.h`
-			- `settingsParms` 包含 `AutoScaleMode`、`minTempNew`、`maxTempNew`、`PaletteCenterPercent`、`ColorScale`、`CrossX`、`CrossY` 等字段。
+| Symptom | Possible Cause | Solution |
+|---------|----------------|----------|
+| Display stays black | Backlight off or DisplayOff not restored | Ensure `st7789_DisplayOn()` is called on wake; check backlight GPIO |
+| Extreme colors (all red/blue) | Small temperature range + AutoScale | Use `fix_scale` to lock a sensible range, or increase `MIN_DISPLAY_RANGE` |
+| No thermal data | I²C wiring or address mismatch | Verify SDA/SCL connections; check MLX90640 I²C address (default 0x33) |
+| Deep sleep won't wake | Wake pin not RTC-capable or wrong polarity | Use an RTC GPIO; ensure button pulls pin LOW to wake |
+| Low FPS | High-quality rendering is CPU-intensive | Switch to 16 Hz or enable low-quality mode for 32 Hz |
 
-		**Build & Flash (PowerShell)**
+---
 
-		Build the project:
+## License / 许可证
 
-		```powershell
-		idf.py fullclean
-		idf.py build
-		```
+This project is provided as an example for educational purposes. Check individual component licenses (ESP-IDF, MLX90640 driver, etc.) for redistribution terms.
 
-		Flash the firmware (replace `COM3` with your serial port):
+---
 
-		```powershell
-		idf.py -p COM3 flash
-		```
-
-		Open serial monitor:
-
-		```powershell
-		idf.py -p COM3 monitor
-		```
-
-		**运行与调试（PowerShell）**
-
-		构建工程：
-
-		```powershell
-		idf.py fullclean
-		idf.py build
-		```
-
-		烧写固件（请替换为实际串口）：
-
-		```powershell
-		idf.py -p COM3 flash
-		```
-
-		串口监视：
-
-		```powershell
-		idf.py -p COM3 monitor
-		```
-
-		**UI Controls (How to use)**
-
-		- Encoder (wheel):
-			- Wheel Confirm / Right-press:
-				- In the image area: enter crosshair move mode (press again to toggle X/Y axis).
-				- On the `fix_scale` title subitem: confirm writes the current frame's raw min/max into settings and disables AutoScale (persisted by `settings_write_all()`).
-			- Wheel Back / Left-press:
-				- Exit crosshair mode and save position; exit subitem/mode to the previous level; in focus mode, enter the menu.
-			- Rotation: navigate items or adjust values depending on context.
-
-		**常用操作（UI 交互）**
-
-		- 旋钮（Wheel / Encoder）：
-			- 右拨 / 确认：
-				- 在图像区：进入十字线移动模式（再次确认切换 X/Y）。
-				- 在标题的 `fix_scale` 子项确认：把当前帧的原始 min/max 写入设置并关闭 AutoScale（由 `settings_write_all()` 持久化）。
-			- 左拨 / 返回：
-				- 退出十字线并保存位置；退出子项或子模式回上一级；焦点模式下进入菜单。
-			- 旋转：在菜单中切换或调整参数。
-
-		**Behavior Notes & Tuning Tips**
-
-		- If you see overly extreme colors (very red/blue) in a near-uniform scene, that is caused by AutoScale mapping small temperature ranges to the full color palette. Use the `fix_scale` subitem to capture a representative frame and make that the fixed display range.
-		- Fix-scale behavior: confirming `fix_scale` writes the last raw frame's min/max (from the MLX data) into `settingsParms.minTempNew` / `settingsParms.maxTempNew`, sets `AutoScaleMode=false`, and persists settings with `settings_write_all()`.
-		- Deep sleep: `system_enter_deep_sleep()` calls `esp_deep_sleep_start()` after configuring ext0/ext1 wake. You must select an RTC-capable GPIO and the correct wake polarity/pull to ensure low-power sleep and reliable wake.
-
-		**行为说明与调优建议**
-
-		- 若在近乎均匀的场景中看到颜色非常极端（偏红或偏蓝），这是 AutoScale 将小的温差放大到整个调色板造成的。可用 `fix_scale` 子项抓取代表帧并将其设为固定量程。
-		- 固定量程（Fix scale）：确认 `fix_scale` 时，系统会把最近一帧的原始 min/max（来自 MLX 数据）写入 `settingsParms.minTempNew` / `settingsParms.maxTempNew`，把 `AutoScaleMode` 设为 false，并调用 `settings_write_all()` 持久化。
-		- 深度睡眠注意事项：`system_enter_deep_sleep()` 在配置 ext0/ext1 唤醒后调用 `esp_deep_sleep_start()`。必须选择 RTC 支持的 GPIO，并设置正确的唤醒电平/上拉下拉，以确保低功耗与可靠唤醒。
-
-		**Developer Notes**
-
-		- To change the screen orientation (MADCTL), edit the register values in `st7789.c` and test drawing alignment.
-		- If you want the denoising/min-range parameters to be user-configurable, add them to `settingsParms` and expose them in the menu.
-		- For stronger noise removal (but slower), consider multi-frame median or connected-component filtering (requires more memory/CPU).
-
-		**开发者提示**
-
-		- 修改屏幕方向（MADCTL）请在 `st7789.c` 中调整寄存器值并验证绘图对齐。
-		- 若希望用户可配置去噪/最小量程，可把这些参数加入 `settingsParms` 并在菜单中暴露。
-		- 若需要更强的去噪（但更慢），考虑使用多帧中值或连通域过滤（需要更多内存和 CPU）。
-
-		---
-
-		If you want me to: translate the README to English-only, add a project logo, or implement UI controls to expose `MIN_DISPLAY_RANGE` and denoising options in the settings menu, I can update the code and submit the changes.
-
-		如果你希望我把 README 变成英文版、加入项目徽标，或把 `MIN_DISPLAY_RANGE` / 去噪选项加入设置菜单并实现 UI，我可以继续修改代码并提交相应变更。
+<p align="center"><i>Made with ❤️ for thermal imaging enthusiasts</i></p>
