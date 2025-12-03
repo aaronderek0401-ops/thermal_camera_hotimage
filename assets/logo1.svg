@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="eyeGradient" cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
+      <stop offset="0%" style="stop-color:#ffffff" />
+      <stop offset="30%" style="stop-color:#ffff00" />
+      <stop offset="60%" style="stop-color:#ff0000" />
+      <stop offset="85%" style="stop-color:#0000ff" />
+      <stop offset="100%" style="stop-color:#000033" />
+    </radialGradient>
+  </defs>
+
+  <!-- 眼睛轮廓 -->
+  <path d="M256,100 C150,100 50,256 50,256 C50,256 150,412 256,412 C362,412 462,256 462,256 C462,256 362,100 256,100 Z" 
+        fill="#111" stroke="url(#eyeGradient)" stroke-width="15"/>
+
+  <!-- 虹膜 (热力图) -->
+  <circle cx="256" cy="256" r="90" fill="url(#eyeGradient)" />
+  
+  <!-- 瞳孔 -->
+  <circle cx="256" cy="256" r="35" fill="#000" />
+  
+  <!-- 高光 (增加立体感) -->
+  <circle cx="280" cy="230" r="15" fill="white" opacity="0.8" />
+  
+  <!-- 扫描线 -->
+  <line x1="50" y1="256" x2="462" y2="256" stroke="#ffffff" stroke-width="2" opacity="0.3">
+    <animate attributeName="y1" values="100;412;100" dur="3s" repeatCount="indefinite" />
+    <animate attributeName="y2" values="100;412;100" dur="3s" repeatCount="indefinite" />
+    <animate attributeName="opacity" values="0.1;0.5;0.1" dur="3s" repeatCount="indefinite" />
+  </line>
+</svg>

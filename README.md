@@ -1,7 +1,7 @@
 # hot image — Thermal Camera Example
 
 <p align="center">
-  <img src="assets/logo.svg" alt="hot image logo" width="400"/>
+  <img src="assets/logo1.svg" alt="hot image logo" width="400"/>
 </p>
 
 <p align="center">
