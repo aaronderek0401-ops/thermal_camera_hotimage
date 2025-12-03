@@ -20,6 +20,12 @@ This project is a real-time thermal camera built on ESP-IDF v5.5. It reads tempe
 **中文:**
 本项目是基于 ESP-IDF v5.5 的实时热像仪。通过 I²C 从 MLX90640 远红外传感器读取温度帧，经过图像处理（高斯模糊 + 双线性插值），映射到伪彩色调色板，并在 ST7789 SPI LCD 上显示。固件支持多种调色板、可调温度范围（自动/固定量程）、可移动十字线（位置持久化）、运行时睡眠以及带 RTC 唤醒的真正深度睡眠。
 
+### Screenshot / 效果图
+
+<p align="center">
+  <img src="assets/img_v3_02sk_631fa140-e93a-4479-aee7-a6043301e7ag.jpg" alt="Thermal camera screenshot" width="480"/>
+</p>
+
 ---
 
 ## Hardware / 硬件
