@@ -503,6 +503,7 @@ error:
 
 /**
  * @brief 保存BMP（逐行写入，节省内存）
+ *        先捕获屏幕数据再显示提示，避免把弹窗保存到截图中
  *
  * @param bits 保存BMP位数
  * @return int
@@ -513,86 +514,354 @@ int save_ImageBMP(uint8_t bits)
     uint16_t screenHeight = dispcolor_getHeight();
     char fileExtension[] = ".BMP";
 
-    // 计算预估文件大小并检查空间
+    // 计算预估文件大小并检查空间（静默检查，不显示弹窗）
     size_t estimatedSize = (bits == 24) ? BMP_24BIT_SIZE : BMP_16BIT_SIZE;
     int spaceCheck = checkSpiffsSpace(estimatedSize);
     if (spaceCheck == -1) {
-        message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Error", "SPIFFS Full!", RED, 1, 1500);
         printf("SPIFFS space insufficient for BMP file\n");
+        // 延迟显示错误，先让用户知道
+        message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Error", "SPIFFS Full!", RED, 1, 1500);
         return -1;
     } else if (spaceCheck == -2) {
         message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Error", "SPIFFS Error", RED, 1, 1000);
         return -1;
     }
 
-    // 获取最大文件序号
+    // 获取最大文件序号（静默操作）
     int32_t maxFileIndex = GetLastIndex(fileExtension);
     if (maxFileIndex < 0) {
         message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Error", "SPIFFS Access Error", RED, 1, 1000);
         return -1;
     }
-
     maxFileIndex++;
 
-    // 只分配一行的缓冲区（节省内存：320×2 = 640 字节）
+    // 分配行缓冲区
     uint16_t* pRowBuffer = malloc(screenWidth * sizeof(uint16_t));
     if (!pRowBuffer) {
         message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Error", "Out of Memory !", RED, 1, 1000);
         return -1;
     }
 
-    // 显示弹窗
-    char message[32];
-    GetStringF(message, "Save To File %05d%s", maxFileIndex, fileExtension);
-    progress_start_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Temperature Map", message, GREEN, 0, 0);
-
+    // 分配临时缓冲区保存整个屏幕数据（320x240x2 = 153600字节）
+    // 由于内存有限，我们采用另一种方法：先打开文件并立即捕获屏幕
+    
     // 拼接路径和文件名
     char fileName[64];
+    char message[32];
     GetStringF(fileName, "%s/%05d%s", SAVE_MOUNT_POINT, maxFileIndex, fileExtension);
 
-    // 打开文件
+    // 打开文件（在显示任何弹窗之前）
     FILE* f = fopen(fileName, "wb");
     if (f == NULL) {
-        message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Error", "Error Writing File!", RED, 1, 1000);
         free(pRowBuffer);
+        message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Error", "Error Writing File!", RED, 1, 1000);
         return -1;
     }
 
+    // ============ 关键：先写入BMP数据，再显示弹窗 ============
     // 写入BMP头
     if (bits == 15 || bits == 16) {
         WriteBmpFileHeaderCore16Bit(f, 16, screenWidth, screenHeight);
 
-        // 逐行写入BMP数据（从底部到顶部，BMP格式要求）
+        // 立即逐行读取屏幕数据并写入（此时屏幕上还是热成像画面）
         for (int row = screenHeight - 1; row >= 0; row--) {
             dispcolor_getRowData(row, pRowBuffer);
             WriteBmpRow_15bit(f, screenWidth, pRowBuffer);
-            if ((screenHeight - 1 - row) % 10 == 0) {
-                progress_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Temperature Map", message, GREEN, 
-                              (screenHeight - 1 - row) / 10 + 1, 24);
-            }
         }
 
     } else if (bits == 24) {
         WriteBmpFileHeaderCore24Bit(f, 24, screenWidth, screenHeight);
 
-        // 逐行写入BMP数据（从底部到顶部）
+        // 立即逐行读取屏幕数据并写入（此时屏幕上还是热成像画面）
         for (int row = screenHeight - 1; row >= 0; row--) {
             dispcolor_getRowData(row, pRowBuffer);
             WriteBmpRow_24bit(f, screenWidth, pRowBuffer);
-            if ((screenHeight - 1 - row) % 10 == 0) {
-                progress_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Temperature Map", message, GREEN,
-                              (screenHeight - 1 - row) / 10 + 1, 24);
-            }
         }
     }
-
-    // 保存文件成功
-    GetStringF(message, "File %05d%s Saved Successfully", maxFileIndex, fileExtension);
-    message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Save Temperature Map", message, GREEN, 0, 1000);
 
     fflush(f);
     fclose(f);
     free(pRowBuffer);
 
+    // ============ 数据已保存完毕，现在才显示成功消息 ============
+    GetStringF(message, "File %05d%s Saved!", maxFileIndex, fileExtension);
+    message_show(SAVE_BMP_WINDOW_WIDTH, FONTID_6X8M, "Screenshot Saved", message, GREEN, 0, 1000);
+
+    return 0;
+}
+
+/**
+ * @brief 获取SPIFFS中BMP文件列表
+ *
+ * @param fileList 输出文件名数组（每个最大32字符）
+ * @param maxFiles 最大文件数量
+ * @return int 实际文件数量，-1表示失败
+ */
+int save_listBmpFiles(char fileList[][32], int maxFiles)
+{
+    DIR* dr = opendir(SAVE_MOUNT_POINT);
+    if (dr == NULL) {
+        return -1;
+    }
+
+    int count = 0;
+    struct dirent* de;
+    while ((de = readdir(dr)) != NULL && count < maxFiles) {
+        if (de->d_type == DT_REG && strstr(de->d_name, ".BMP")) {
+            strncpy(fileList[count], de->d_name, 31);
+            fileList[count][31] = '\0';
+            count++;
+        }
+    }
+
+    closedir(dr);
+    
+    // 简单排序（按文件名）
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (strcmp(fileList[i], fileList[j]) > 0) {
+                char temp[32];
+                strcpy(temp, fileList[i]);
+                strcpy(fileList[i], fileList[j]);
+                strcpy(fileList[j], temp);
+            }
+        }
+    }
+    
+    return count;
+}
+
+/**
+ * @brief 删除指定的BMP文件
+ *
+ * @param fileName 文件名（不含路径）
+ * @return int 0成功，-1失败
+ */
+int save_deleteBmpFile(const char* fileName)
+{
+    char fullPath[64];
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", SAVE_MOUNT_POINT, fileName);
+    
+    if (remove(fullPath) == 0) {
+        printf("Deleted: %s\n", fullPath);
+        return 0;
+    } else {
+        printf("Failed to delete: %s\n", fullPath);
+        return -1;
+    }
+}
+
+/**
+ * @brief 删除所有BMP文件
+ *
+ * @return int 删除的文件数量，-1表示失败
+ */
+int save_deleteAllBmpFiles(void)
+{
+    char fileList[20][32];
+    int count = save_listBmpFiles(fileList, 20);
+    if (count < 0) return -1;
+    
+    int deleted = 0;
+    for (int i = 0; i < count; i++) {
+        if (save_deleteBmpFile(fileList[i]) == 0) {
+            deleted++;
+        }
+    }
+    return deleted;
+}
+
+/**
+ * @brief 显示BMP文件到屏幕
+ *
+ * @param fileName 文件名（不含路径）
+ * @return int 0成功，-1失败
+ */
+int save_viewBmpFile(const char* fileName)
+{
+    char fullPath[64];
+    snprintf(fullPath, sizeof(fullPath), "%s/%s", SAVE_MOUNT_POINT, fileName);
+    
+    printf("Opening BMP: %s\n", fullPath);
+    
+    FILE* f = fopen(fullPath, "rb");
+    if (f == NULL) {
+        printf("Cannot open file: %s\n", fullPath);
+        return -1;
+    }
+    
+    // 读取BMP文件头（前14字节）
+    uint8_t fileHeader[14];
+    if (fread(fileHeader, 1, 14, f) != 14) {
+        printf("Failed to read BMP file header\n");
+        fclose(f);
+        return -1;
+    }
+    
+    // 验证BMP签名
+    if (fileHeader[0] != 'B' || fileHeader[1] != 'M') {
+        printf("Not a valid BMP file: sig=%c%c\n", fileHeader[0], fileHeader[1]);
+        fclose(f);
+        return -1;
+    }
+    
+    // 获取像素数据偏移
+    uint32_t dataOffset = *(uint32_t*)&fileHeader[10];
+    
+    // 读取DIB头大小以确定头类型
+    uint32_t dibHeaderSize;
+    if (fread(&dibHeaderSize, 4, 1, f) != 1) {
+        printf("Failed to read DIB header size\n");
+        fclose(f);
+        return -1;
+    }
+    
+    printf("BMP: dataOffset=%d, dibHeaderSize=%d\n", (int)dataOffset, (int)dibHeaderSize);
+    
+    int32_t width, height;
+    uint16_t bitsPerPixel;
+    
+    if (dibHeaderSize == 12) {
+        // BITMAPCOREHEADER (OS/2 格式，我们的24位保存用这个)
+        uint8_t coreHeader[8];  // 已读4字节(dibHeaderSize)，还剩8字节
+        if (fread(coreHeader, 1, 8, f) != 8) {
+            printf("Failed to read BITMAPCOREHEADER\n");
+            fclose(f);
+            return -1;
+        }
+        width = *(uint16_t*)&coreHeader[0];   // 2字节宽度
+        height = *(uint16_t*)&coreHeader[2];  // 2字节高度 (无符号)
+        // planes = *(uint16_t*)&coreHeader[4]; // 2字节
+        bitsPerPixel = *(uint16_t*)&coreHeader[6];  // 2字节
+        printf("BITMAPCOREHEADER: w=%d, h=%d, bits=%d\n", (int)width, (int)height, bitsPerPixel);
+    } else if (dibHeaderSize >= 40) {
+        // BITMAPINFOHEADER 或更大的头 (我们的16位保存用这个)
+        uint8_t infoHeader[36];  // 已读4字节，再读36字节完成40字节头
+        if (fread(infoHeader, 1, 36, f) != 36) {
+            printf("Failed to read BITMAPINFOHEADER\n");
+            fclose(f);
+            return -1;
+        }
+        width = *(int32_t*)&infoHeader[0];   // 4字节宽度
+        height = *(int32_t*)&infoHeader[4];  // 4字节高度
+        // planes = *(uint16_t*)&infoHeader[8]; // 2字节
+        bitsPerPixel = *(uint16_t*)&infoHeader[10];  // 2字节
+        printf("BITMAPINFOHEADER: w=%d, h=%d, bits=%d\n", (int)width, (int)height, bitsPerPixel);
+    } else {
+        printf("Unknown DIB header size: %d\n", (int)dibHeaderSize);
+        fclose(f);
+        return -1;
+    }
+    
+    // 处理负高度（表示从上到下存储）- 仅BITMAPINFOHEADER支持
+    bool topDown = false;
+    if (height < 0) {
+        topDown = true;
+        height = -height;
+    }
+    
+    printf("Final: w=%d, h=%d, bits=%d, topDown=%d\n", (int)width, (int)height, bitsPerPixel, topDown);
+    
+    // 验证尺寸 - 放宽限制，允许不同尺寸
+    if (width <= 0 || width > 320 || height <= 0 || height > 240) {
+        printf("Unsupported BMP size: %dx%d\n", (int)width, (int)height);
+        fclose(f);
+        return -1;
+    }
+    
+    uint16_t screenWidth = dispcolor_getWidth();
+    uint16_t screenHeight = dispcolor_getHeight();
+    
+    // 定位到像素数据
+    fseek(f, dataOffset, SEEK_SET);
+    
+    printf("Reading pixel data...\n");
+    
+    if (bitsPerPixel == 16) {
+        // 16位BMP，每像素2字节
+        uint16_t* rowBuf = malloc(width * 2);
+        if (!rowBuf) {
+            printf("malloc failed for 16-bit row\n");
+            fclose(f);
+            return -1;
+        }
+        
+        for (int i = 0; i < height; i++) {
+            int row = topDown ? i : (height - 1 - i);
+            if (fread(rowBuf, 2, width, f) != (size_t)width) {
+                printf("Read error at row %d\n", i);
+                break;
+            }
+            if (row < screenHeight) {
+                for (int x = 0; x < screenWidth && x < width; x++) {
+                    dispcolor_DrawPixel(x, row, rowBuf[x]);
+                }
+            }
+        }
+        free(rowBuf);
+        
+    } else if (bitsPerPixel == 32) {
+        // 32位BMP（我们的"24位"实际保存为32位）
+        uint8_t* rowBuf = malloc(width * 4);
+        if (!rowBuf) {
+            printf("malloc failed for 32-bit row\n");
+            fclose(f);
+            return -1;
+        }
+        
+        for (int i = 0; i < height; i++) {
+            int row = topDown ? i : (height - 1 - i);
+            if (fread(rowBuf, 4, width, f) != (size_t)width) {
+                printf("Read error at row %d\n", i);
+                break;
+            }
+            if (row < screenHeight) {
+                for (int x = 0; x < screenWidth && x < width; x++) {
+                    uint8_t b = rowBuf[x * 4];
+                    uint8_t g = rowBuf[x * 4 + 1];
+                    uint8_t r = rowBuf[x * 4 + 2];
+                    uint16_t color = RGB565(r, g, b);
+                    dispcolor_DrawPixel(x, row, color);
+                }
+            }
+        }
+        free(rowBuf);
+        
+    } else if (bitsPerPixel == 24) {
+        // 真24位BMP
+        int rowBytes = ((width * 3 + 3) / 4) * 4;  // 4字节对齐
+        uint8_t* rowBuf = malloc(rowBytes);
+        if (!rowBuf) {
+            printf("malloc failed for 24-bit row\n");
+            fclose(f);
+            return -1;
+        }
+        
+        for (int i = 0; i < height; i++) {
+            int row = topDown ? i : (height - 1 - i);
+            if (fread(rowBuf, 1, rowBytes, f) != (size_t)rowBytes) {
+                printf("Read error at row %d\n", i);
+                break;
+            }
+            if (row < screenHeight) {
+                for (int x = 0; x < screenWidth && x < width; x++) {
+                    uint8_t b = rowBuf[x * 3];
+                    uint8_t g = rowBuf[x * 3 + 1];
+                    uint8_t r = rowBuf[x * 3 + 2];
+                    uint16_t color = RGB565(r, g, b);
+                    dispcolor_DrawPixel(x, row, color);
+                }
+            }
+        }
+        free(rowBuf);
+    } else {
+        printf("Unsupported BMP format: %d bits\n", bitsPerPixel);
+        fclose(f);
+        return -1;
+    }
+    
+    printf("BMP load success!\n");
+    fclose(f);
+    dispcolor_Update();
     return 0;
 }

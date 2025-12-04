@@ -5,7 +5,7 @@
 #include "render_task.h"
 #include "sleep.h"
 #include "settings.h"
-// #include "save.h"
+#include "save.h"
 #include <stdbool.h>
 
 #include <string.h>
@@ -31,6 +31,8 @@ typedef enum {
     MENU_SET_MAX_TEMP,
     MENU_MLX_FPS,
     MENU_REALTIME_ANALYSIS,
+    MENU_VIEW_SCREENSHOTS,
+    MENU_DELETE_SCREENSHOTS,
     MENU_ITEMS_COUNT
 } menu_item_t;
 
@@ -59,9 +61,19 @@ int menu_run_simple(void)
         // render items (use wider full-width rows)
         int16_t item_left = 20;
         int16_t item_right = screen_w - 20;
-        int16_t item_height = 28;
-        int16_t item_top = 56;
+        int16_t item_height = 24;  // 减小行高以适应更多项目
+        int16_t item_top = 40;     // 减小顶部间距
+        int16_t visible_area_height = screen_h - item_top - 10;
+        int16_t max_visible_items = visible_area_height / item_height;
         char labels[MENU_ITEMS_COUNT][40];
+
+        // 计算滚动偏移，使选中项可见
+        static int scroll_offset = 0;
+        if (selected < scroll_offset) {
+            scroll_offset = selected;
+        } else if (selected >= scroll_offset + max_visible_items) {
+            scroll_offset = selected - max_visible_items + 1;
+        }
 
         for (int i = 0; i < MENU_ITEMS_COUNT; i++) {
             switch (i) {
@@ -90,31 +102,46 @@ int menu_run_simple(void)
             case MENU_REALTIME_ANALYSIS:
                 snprintf(labels[i], sizeof(labels[i]), "Real-time Data Analysis: %s", settingsParms.RealTimeAnalysis ? "On" : "Off");
                 break;
+            case MENU_VIEW_SCREENSHOTS:
+                snprintf(labels[i], sizeof(labels[i]), "View Screenshots");
+                break;
+            case MENU_DELETE_SCREENSHOTS:
+                snprintf(labels[i], sizeof(labels[i]), "Delete Screenshots");
+                break;
             default:
                 labels[i][0] = '\0';
                 break;
             }
         }
 
-        for (int i = 0; i < MENU_ITEMS_COUNT; i++) {
-            int16_t y0 = item_top + i * item_height;
-            int16_t y1 = y0 + item_height - 6;
-            // 背景统一为黑色
-            dispcolor_DrawRectangleFilled(item_left, y0, item_right, y1, BLACK);
+        // 清除菜单区域
+        dispcolor_FillRect(0, item_top - 5, screen_w, screen_h, BLACK);
+        
+        // 只绘制可见的菜单项
+        for (int i = scroll_offset; i < MENU_ITEMS_COUNT && i < scroll_offset + max_visible_items; i++) {
+            int16_t display_index = i - scroll_offset;
+            int16_t y0 = item_top + display_index * item_height;
+            int16_t y1 = y0 + item_height - 4;
 
-            int16_t dot_x = item_left - 12;
+            int16_t dot_x = item_left - 10;
             int16_t dot_y = y0 + (y1 - y0) / 2;
             if (i == selected) {
                 uint16_t dotColor = RGB565(255, 255, 0);
-                dispcolor_DrawCircleFilled(dot_x, dot_y, 2, dotColor);
-            } else {
-                // 清除任何旧的点
-                dispcolor_DrawRectangleFilled(dot_x - 5, dot_y - 5, dot_x + 5, dot_y + 5, BLACK);
+                dispcolor_DrawCircleFilled(dot_x, dot_y, 3, dotColor);
             }
 
             // 文本
-            dispcolor_printf(item_left + 8, y0 + 6, FONTID_6X8M, WHITE, "%s", labels[i]);
+            dispcolor_printf(item_left + 4, y0 + 4, FONTID_6X8M, WHITE, "%s", labels[i]);
         }
+        
+        // 显示滚动指示器
+        if (scroll_offset > 0) {
+            dispcolor_printf(screen_w - 12, item_top, FONTID_6X8M, YELLOW, "^");
+        }
+        if (scroll_offset + max_visible_items < MENU_ITEMS_COUNT) {
+            dispcolor_printf(screen_w - 12, screen_h - 12, FONTID_6X8M, YELLOW, "v");
+        }
+        
         dispcolor_Update();
 
         // wait for wheel/encoder events
@@ -316,6 +343,134 @@ int menu_run_simple(void)
                 settingsParms.RealTimeAnalysis = !settingsParms.RealTimeAnalysis;
                 settings_write_all();
                 break;
+            case MENU_VIEW_SCREENSHOTS: {
+                // 查看截图子菜单
+                char fileList[20][32];
+                int fileCount = save_listBmpFiles(fileList, 20);
+                
+                if (fileCount <= 0) {
+                    dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                    dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "No screenshots found");
+                    dispcolor_Update();
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
+                } else {
+                    int viewIndex = 0;
+                    bool viewDone = false;
+                    
+                    while (!viewDone) {
+                        // 显示文件列表
+                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                        // dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "View Screenshots");
+                        dispcolor_printf(28, 56, FONTID_6X8M, WHITE, "File %d/%d: %s", viewIndex + 1, fileCount, fileList[viewIndex]);
+                        dispcolor_printf(28, 76, FONTID_6X8M, WHITE, "Encoder:select, R:view, L:back");
+                        dispcolor_Update();
+                        
+                        EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                        
+                        if (bits2 & RENDER_Encoder_Up) {
+                            if (viewIndex > 0) viewIndex--; else viewIndex = fileCount - 1;
+                        }
+                        if (bits2 & RENDER_Encoder_Down) {
+                            if (viewIndex < fileCount - 1) viewIndex++; else viewIndex = 0;
+                        }
+                        if (bits2 & RENDER_Wheel_Confirm) {
+                            // 显示选中的图片
+                            dispcolor_FillRect(0, 0, screen_w, screen_h, BLACK);
+                            if (save_viewBmpFile(fileList[viewIndex]) == 0) {
+                                // 显示文件名在底部
+                                dispcolor_printf(4, screen_h - 12, FONTID_6X8M, WHITE, "%s - Wheel:back", fileList[viewIndex]);
+                                dispcolor_Update();
+                                // 等待返回
+                                xEventGroupWaitBits(pHandleEventGroup, RENDER_Wheel_Back | RENDER_Wheel_Confirm, pdTRUE, pdFALSE, portMAX_DELAY);
+                            } else {
+                                dispcolor_printf(28, 118, FONTID_6X8M, RED, "Failed to load image");
+                                dispcolor_Update();
+                                vTaskDelay(1000 / portTICK_PERIOD_MS);
+                            }
+                            // 重绘菜单背景
+                            dispcolor_FillRect(0, 0, screen_w, screen_h, BLACK);
+                            dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
+                        }
+                        if (bits2 & RENDER_Wheel_Back) {
+                            viewDone = true;
+                        }
+                    }
+                }
+                // 清理并重绘主菜单
+                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+            } break;
+            case MENU_DELETE_SCREENSHOTS: {
+                // 删除截图子菜单
+                char fileList[20][32];
+                int fileCount = save_listBmpFiles(fileList, 20);
+                
+                if (fileCount <= 0) {
+                    dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                    dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "No screenshots to delete");
+                    dispcolor_Update();
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
+                } else {
+                    int delIndex = 0;  // 0 = 选择单个文件, 最后一项 = 删除全部
+                    bool delDone = false;
+                    
+                    while (!delDone) {
+                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                        // dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Delete Screenshots");
+                        
+                        if (delIndex < fileCount) {
+                            dispcolor_printf(28, 56, FONTID_6X8M, WHITE, "File %d/%d: %s", delIndex + 1, fileCount, fileList[delIndex]);
+                        } else {
+                            dispcolor_printf(28, 56, FONTID_6X8M, YELLOW, "** DELETE ALL (%d files) **", fileCount);
+                        }
+                        dispcolor_printf(28, 76, FONTID_6X8M, WHITE, "Encoder:select, R:delete, L:back");
+                        dispcolor_Update();
+                        
+                        EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                        
+                        if (bits2 & RENDER_Encoder_Up) {
+                            if (delIndex > 0) delIndex--; else delIndex = fileCount; // 包含"删除全部"选项
+                        }
+                        if (bits2 & RENDER_Encoder_Down) {
+                            if (delIndex < fileCount) delIndex++; else delIndex = 0;
+                        }
+                        if (bits2 & RENDER_Wheel_Confirm) {
+                            dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+                            
+                            if (delIndex < fileCount) {
+                                // 删除单个文件
+                                if (save_deleteBmpFile(fileList[delIndex]) == 0) {
+                                    dispcolor_printf(28, 118, FONTID_6X8M, GREEN, "Deleted: %s", fileList[delIndex]);
+                                } else {
+                                    dispcolor_printf(28, 118, FONTID_6X8M, RED, "Delete failed!");
+                                }
+                            } else {
+                                // 删除全部
+                                int deleted = save_deleteAllBmpFiles();
+                                if (deleted > 0) {
+                                    dispcolor_printf(28, 118, FONTID_6X8M, GREEN, "Deleted %d files", deleted);
+                                } else {
+                                    dispcolor_printf(28, 118, FONTID_6X8M, RED, "Delete failed!");
+                                }
+                            }
+                            dispcolor_Update();
+                            vTaskDelay(1000 / portTICK_PERIOD_MS);
+                            
+                            // 重新获取文件列表
+                            fileCount = save_listBmpFiles(fileList, 20);
+                            if (fileCount <= 0) {
+                                delDone = true;
+                            } else {
+                                delIndex = 0;
+                            }
+                        }
+                        if (bits2 & RENDER_Wheel_Back) {
+                            delDone = true;
+                        }
+                    }
+                }
+                // 清理并重绘主菜单
+                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
+            } break;
             }
         }
         if ((bits & RENDER_Wheel_Back) == RENDER_Wheel_Back) {
