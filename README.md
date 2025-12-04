@@ -102,6 +102,16 @@ This project is a real-time thermal camera built on ESP-IDF v5.5. It reads tempe
 | **Runtime sleep** | Pauses MLX90640 sampling, turns off display/backlight. Wakes on any input event. |
 | **Deep sleep** | Calls `esp_deep_sleep_start()` with ext0 wake on `DEEP_SLEEP_WAKE_PIN` (GPIO1 default). Device resets on wake. |
 
+### Screenshot / 截图功能
+
+| Feature | Description |
+|---------|-------------|
+| **Save screenshot** | Press encoder button to save current thermal image to internal SPIFFS storage as BMP file |
+| **View screenshots** | Access "View Screenshots" in menu to browse and display saved images |
+| **Delete screenshots** | Access "Delete Screenshots" in menu to remove individual or all saved images |
+| **Storage** | Internal SPIFFS partition (`/spiffs`), ~640KB available, stores 2-3 screenshots |
+| **File format** | BMP format (32-bit per pixel), filename: `00001.BMP`, `00002.BMP`, etc. |
+
 ### Persistent Settings (NVS) / 持久化设置
 
 All settings are stored in NVS via `settings_write_all()` and loaded at boot via `settings_read_all()`.
@@ -220,6 +230,22 @@ Press **Wheel Left** from the main screen to open the Simple Menu:
 | Max Temp | Adjust upper bound (fixed scale) |
 | MLX FPS | Toggle 16 Hz / 32 Hz (32 Hz enables low-quality render) |
 | Real-time Data Analysis | Toggle bottom data bar |
+| View Screenshots | Browse and view saved BMP screenshots |
+| Delete Screenshots | Delete individual or all saved screenshots |
+
+### Taking Screenshots / 保存截图
+
+1. While viewing the live thermal image, press the **Encoder Button** (GPIO8).
+2. The current frame is saved to internal SPIFFS storage as a BMP file.
+3. A confirmation message shows the filename (e.g., "File 00001.BMP Saved!").
+4. Note: Storage is limited (~640KB), can hold 2-3 screenshots.
+
+### Viewing Screenshots / 查看截图
+
+1. Enter the menu and select **View Screenshots**.
+2. Use encoder to scroll through saved files.
+3. Press **Wheel Confirm** to display the selected image full-screen.
+4. Press **Wheel Back** to return to the file list.
 
 ### Fixing the Temperature Range / 固定量程
 
@@ -276,6 +302,53 @@ Increase for more stable colors in uniform scenes; decrease for finer detail.
 | No thermal data | I²C wiring or address mismatch | Verify SDA/SCL connections; check MLX90640 I²C address (default 0x33) |
 | Deep sleep won't wake | Wake pin not RTC-capable or wrong polarity | Use an RTC GPIO; ensure button pulls pin LOW to wake |
 | Low FPS | High-quality rendering is CPU-intensive | Switch to 16 Hz or enable low-quality mode for 32 Hz |
+| SPIFFS Full | Storage partition is full | Delete old screenshots via menu or increase partition size |
+| Failed to load image | BMP file corrupted or format mismatch | Re-save the screenshot; check serial log for detailed error |
+
+---
+
+## Extracting Screenshots to PC / 将截图拷贝到电脑
+
+There are two methods to extract saved BMP files from the device to your PC:
+
+### Method A: Dump SPIFFS Partition via esptool (No firmware change)
+
+This method reads the entire SPIFFS partition and requires a tool to extract files from the image.
+
+1. **Install esptool** (if not already installed):
+   ```powershell
+   python -m pip install --user esptool
+   ```
+
+2. **Read the SPIFFS partition** (check `partitions.csv` for offset/size):
+   ```powershell
+   # Default: offset=0x160000, size=0xA0000
+   esptool.py --port COM3 read_flash 0x160000 0xA0000 storage.bin
+   ```
+
+3. **Extract files from the SPIFFS image**:
+   - Use a SPIFFS extraction tool like [spiffsview](https://github.com/tonyp7/spiffsview) or similar.
+   - Or write the image back to another ESP32 and read files via code.
+
+### Method B: Serial Monitor + Base64 (Recommended for single files)
+
+Add a UART file transfer function to the firmware (contact maintainer or implement `save_sendFileBase64()`) that outputs the file as Base64 via serial:
+
+1. **Capture serial output to a file**:
+   ```powershell
+   idf.py -p COM3 monitor > capture.txt
+   ```
+
+2. **Trigger file transfer** from menu (if implemented).
+
+3. **Decode the Base64 in PowerShell**:
+   ```powershell
+   $lines = Get-Content .\capture.txt
+   $start = ($lines | Select-String '===FILEBASE64 START:' -SimpleMatch).LineNumber[0]
+   $end   = ($lines | Select-String '===FILEBASE64 END:' -SimpleMatch).LineNumber[0]
+   $payload = ($lines[$start..($end - 2)]) -join ""
+   [IO.File]::WriteAllBytes('.\screenshot.BMP', [Convert]::FromBase64String($payload))
+   ```
 
 ---
 
