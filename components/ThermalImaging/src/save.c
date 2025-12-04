@@ -559,6 +559,11 @@ int save_ImageBMP(uint8_t bits)
     }
 
     // ============ 关键：先写入BMP数据，再显示弹窗 ============
+    // 进度条参数：底部一条红线
+    const int16_t progressY = screenHeight - 2;  // 底部位置
+    const int16_t progressH = 2;                 // 进度条高度
+    const uint16_t progressColor = RGB565(0, 255, 128);    // 红色
+    
     // 写入BMP头
     if (bits == 15 || bits == 16) {
         WriteBmpFileHeaderCore16Bit(f, 16, screenWidth, screenHeight);
@@ -567,6 +572,13 @@ int save_ImageBMP(uint8_t bits)
         for (int row = screenHeight - 1; row >= 0; row--) {
             dispcolor_getRowData(row, pRowBuffer);
             WriteBmpRow_15bit(f, screenWidth, pRowBuffer);
+            
+            // 更新进度条（每10行更新一次，减少刷新次数）
+            if ((screenHeight - 1 - row) % 10 == 0) {
+                int progress = ((screenHeight - 1 - row) * screenWidth) / screenHeight;
+                dispcolor_FillRect(0, progressY, progress, progressH, progressColor);
+                dispcolor_Update();
+            }
         }
 
     } else if (bits == 24) {
@@ -576,8 +588,19 @@ int save_ImageBMP(uint8_t bits)
         for (int row = screenHeight - 1; row >= 0; row--) {
             dispcolor_getRowData(row, pRowBuffer);
             WriteBmpRow_24bit(f, screenWidth, pRowBuffer);
+            
+            // 更新进度条（每10行更新一次）
+            if ((screenHeight - 1 - row) % 10 == 0) {
+                int progress = ((screenHeight - 1 - row) * screenWidth) / screenHeight;
+                dispcolor_FillRect(0, progressY, progress, progressH, progressColor);
+                dispcolor_Update();
+            }
         }
     }
+    
+    // 进度条填满
+    dispcolor_FillRect(0, progressY, screenWidth, progressH, progressColor);
+    dispcolor_Update();
 
     fflush(f);
     fclose(f);
