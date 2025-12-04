@@ -335,7 +335,9 @@ static void DrawSectionFocus(focus_section_t focus,
     //     dispcolor_DrawCircleFilled(xPos, yPos[i], 4, BLACK);
     // }
 
-    dispcolor_DrawCircleFilled(xPos, yPos[focus], 2, RGB565(255, 255, 0));
+    // dispcolor_DrawCircleFilled(xPos, yPos[focus], 2, RGB565(255, 255, 0));
+    dispcolor_printf(xPos, yPos[focus], FONTID_6X8M, WHITE, ">");
+
 }
 
 // 渲染任务 - 使用render_task的图像优化方法

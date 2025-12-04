@@ -20,11 +20,11 @@ extern int mlx90640_flushRate(void);
 extern bool lowQualityRender;
 
 // --- GEEK STYLE THEME COLORS (RGB565) ---
-#define C_BLACK   0x0000
-#define C_WHITE   0xFFFF
-#define C_CYAN    0x07FF  // Bright Cyan
+#define C_BLACK   0xFFFF
+#define C_WHITE   0x0000
+#define C_CYAN    0x7FFF  // Bright Cyan
 #define C_DCYAN   0x0210  // Dark/Dim Cyan
-#define C_GREY    0x8410  // Mid Grey
+#define C_GREY    0x8430  // Mid Grey
 
 typedef enum {
     MENU_OPEN_CAMERA = 0,
@@ -59,18 +59,18 @@ void draw_adjust_overlay(const char* title, const char* value_str, const char* h
     int16_t by = (sh - bh) / 2;
 
     // Box Frame (Cyan Border, Black Fill)
-    dispcolor_FillRect(bx - 1, by - 1, bw + 2, bh + 2, C_CYAN);
+    dispcolor_FillRect(bx - 1, by - 1, bw + 2, bh + 2, C_GREY);
     dispcolor_FillRect(bx, by, bw, bh, C_BLACK);
 
     // Title Bar of Box
-    dispcolor_FillRect(bx, by, bw, 18, C_CYAN);
-    dispcolor_printf(bx + 4, by + 4, FONTID_6X8M, C_BLACK, "%s", title);
+    dispcolor_FillRect(bx, by, bw, 18, C_GREY);
+    dispcolor_printf(bx + 4, by + 4, FONTID_6X8M, C_WHITE, "%s", title);
 
     // Value
     dispcolor_printf(bx + 20, by + 30, FONTID_16F, C_WHITE, "%s", value_str);
 
     // Hint
-    dispcolor_printf(bx + 4, by + bh - 12, FONTID_6X8M, C_CYAN, "%s", hint);
+    dispcolor_printf(bx + 4, by + bh - 12, FONTID_6X8M, C_WHITE, "%s", hint);
 }
 
 int menu_run_simple(void)
@@ -88,9 +88,9 @@ int menu_run_simple(void)
         dispcolor_FillRect(0, 0, screen_w, screen_h, C_BLACK);
 
         // Header Bar
-        dispcolor_FillRect(0, 0, screen_w, 18, C_DCYAN); // Darker top bar
-        dispcolor_FillRect(0, 18, screen_w, 1, C_CYAN);  // Separator line
-        dispcolor_printf(4, 5, FONTID_6X8M, C_CYAN, "SYSTEM MENU");
+        dispcolor_FillRect(0, 0, screen_w, 18, C_GREY); // Darker top bar
+        dispcolor_FillRect(0, 18, screen_w, 1, C_GREY);  // Separator line
+        dispcolor_printf(4, 5, FONTID_6X8M, C_WHITE, "SYSTEM MENU");
         
         // Optional: Battery or Time could go here on the right
 
@@ -147,13 +147,13 @@ int menu_run_simple(void)
             // Draw Item Row
             if (i == selected) {
                 // Selected: Cyan Box, Black Text (Inverted)
-                dispcolor_FillRect(2, y, screen_w - 14, item_height, C_CYAN);
-                dispcolor_printf(6, y + 5, FONTID_6X8M, C_BLACK, "> %s", label);
-                if(value[0]) dispcolor_printf(screen_w - 14 - (strlen(value)*6) - 4, y + 5, FONTID_6X8M, C_BLACK, "%s", value);
+                dispcolor_FillRect(2, y, screen_w - 14, item_height, C_GREY);
+                dispcolor_printf(6, y + 5, FONTID_6X8M, C_WHITE, "> %s", label);
+                if(value[0]) dispcolor_printf(screen_w - 14 - (strlen(value)*6) - 4, y + 5, FONTID_6X8M, C_WHITE, "%s", value);
             } else {
                 // Normal: Black Bg, Cyan Text
-                dispcolor_printf(6, y + 5, FONTID_6X8M, C_DCYAN, "  %s", label); // Dim cyan
-                if(value[0]) dispcolor_printf(screen_w - 14 - (strlen(value)*6) - 4, y + 5, FONTID_6X8M, C_DCYAN, "%s", value);
+                dispcolor_printf(6, y + 5, FONTID_6X8M, C_WHITE, "  %s", label); // Dim cyan
+                if(value[0]) dispcolor_printf(screen_w - 14 - (strlen(value)*6) - 4, y + 5, FONTID_6X8M, C_WHITE, "%s", value);
             }
         }
 
@@ -162,17 +162,17 @@ int menu_run_simple(void)
         int16_t sb_y = list_top;
         int16_t sb_h = max_visible * item_height;
         // Track
-        dispcolor_FillRect(sb_x + 2, sb_y, 1, sb_h, C_DCYAN); 
+        dispcolor_FillRect(sb_x + 2, sb_y, 1, sb_h, C_GREY); 
         // Thumb
         int16_t thumb_h = (sb_h * max_visible) / MENU_ITEMS_COUNT;
         if (thumb_h < 4) thumb_h = 4;
         int16_t thumb_y = sb_y + (scroll_offset * (sb_h - thumb_h)) / (MENU_ITEMS_COUNT - max_visible > 0 ? MENU_ITEMS_COUNT - max_visible : 1);
-        dispcolor_FillRect(sb_x, thumb_y, 5, thumb_h, C_CYAN);
+        // dispcolor_FillRect(sb_x, thumb_y, 5, thumb_h, C_CYAN);
 
 
         // --- 5. Footer / Status ---
-        dispcolor_FillRect(0, screen_h - 12, screen_w, 1, C_DCYAN);
-        dispcolor_printf(4, screen_h - 10, FONTID_6X8M, C_DCYAN, "UP/DN:NAV  WHEEL:SEL");
+        dispcolor_FillRect(0, screen_h - 12, screen_w, 1, C_GREY);
+        dispcolor_printf(4, screen_h - 10, FONTID_6X8M, C_WHITE, "UP/DN:NAV  WHEEL:SEL");
 
         dispcolor_Update();
 
@@ -303,7 +303,7 @@ int menu_run_simple(void)
                              // Add counter
                             char ctr[32]; snprintf(ctr, sizeof(ctr), "%d/%d", viewIndex+1, fileCount);
                             int16_t cx = (screen_w - 200)/2 + 180;
-                            dispcolor_printf(cx, (screen_h-80)/2 + 4, FONTID_6X8M, C_BLACK, "%s", ctr);
+                            dispcolor_printf(cx, (screen_h-80)/2 + 4, FONTID_6X8M, C_WHITE, "%s", ctr);
                             dispcolor_Update();
 
                             EventBits_t b2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
