@@ -19,9 +19,12 @@ extern int mlx90640_flushRate(void);
 // runtime control for render quality in render_task_simple
 extern bool lowQualityRender;
 
-// A very small menu that uses wheel/encoder event bits.
-// Navigation: Encoder Up/Down to move through items and adjust values,
-// Wheel Confirm (right) to select/confirm, Wheel Back (left) to exit/cancel.
+// --- GEEK STYLE THEME COLORS (RGB565) ---
+#define C_BLACK   0x0000
+#define C_WHITE   0xFFFF
+#define C_CYAN    0x07FF  // Bright Cyan
+#define C_DCYAN   0x0210  // Dark/Dim Cyan
+#define C_GREY    0x8410  // Mid Grey
 
 typedef enum {
     MENU_OPEN_CAMERA = 0,
@@ -36,451 +39,325 @@ typedef enum {
     MENU_ITEMS_COUNT
 } menu_item_t;
 
-// Human-readable MLX90640 refresh rate strings (indices 0..7 -> 0.5..64 Hz)
 static const char* MLX_FPS_STR[] = { "0.5", "1", "2", "4", "8", "16", "32", "64" };
+
+// Helper to clear a content area inside the menu frame
+void draw_menu_clear_content(int16_t w, int16_t h) {
+    // Keep header (0-20) and footer area, clear middle
+    dispcolor_FillRect(0, 21, w, h - 21, C_BLACK);
+}
+
+// Helper to draw a "Geek" style value adjust box
+void draw_adjust_overlay(const char* title, const char* value_str, const char* hint) {
+    int16_t sw = dispcolor_getWidth();
+    int16_t sh = dispcolor_getHeight();
+    
+    // Draw a bordered box in center
+    int16_t bw = 200;
+    int16_t bh = 80;
+    int16_t bx = (sw - bw) / 2;
+    int16_t by = (sh - bh) / 2;
+
+    // Box Frame (Cyan Border, Black Fill)
+    dispcolor_FillRect(bx - 1, by - 1, bw + 2, bh + 2, C_CYAN);
+    dispcolor_FillRect(bx, by, bw, bh, C_BLACK);
+
+    // Title Bar of Box
+    dispcolor_FillRect(bx, by, bw, 18, C_CYAN);
+    dispcolor_printf(bx + 4, by + 4, FONTID_6X8M, C_BLACK, "%s", title);
+
+    // Value
+    dispcolor_printf(bx + 20, by + 30, FONTID_16F, C_WHITE, "%s", value_str);
+
+    // Hint
+    dispcolor_printf(bx + 4, by + bh - 12, FONTID_6X8M, C_CYAN, "%s", hint);
+}
 
 int menu_run_simple(void)
 {
     if (pHandleEventGroup == NULL) return -1;
 
-    // draw a full-screen menu background
     int16_t screen_w = dispcolor_getWidth();
     int16_t screen_h = dispcolor_getHeight();
-    dispcolor_FillRect(0, 0, screen_w, screen_h, BLACK);
-    // center title horizontally near the top
-    int16_t title_w = dispcolor_getStrWidth(FONTID_16F, "Simple Menu");
-    int16_t title_x = (screen_w - title_w) / 2;
-    int16_t title_y = 12;
-    if (title_x < 0) title_x = 0;
-    dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
 
     int selected = 0;
     bool exit = false;
 
     while (!exit) {
-        // render items (use wider full-width rows)
-        int16_t item_left = 20;
-        int16_t item_right = screen_w - 20;
-        int16_t item_height = 24;  // 减小行高以适应更多项目
-        int16_t item_top = 40;     // 减小顶部间距
-        int16_t visible_area_height = screen_h - item_top - 10;
-        int16_t max_visible_items = visible_area_height / item_height;
-        char labels[MENU_ITEMS_COUNT][40];
+        // --- 1. Draw UI Background & Header ---
+        dispcolor_FillRect(0, 0, screen_w, screen_h, C_BLACK);
 
-        // 计算滚动偏移，使选中项可见
+        // Header Bar
+        dispcolor_FillRect(0, 0, screen_w, 18, C_DCYAN); // Darker top bar
+        dispcolor_FillRect(0, 18, screen_w, 1, C_CYAN);  // Separator line
+        dispcolor_printf(4, 5, FONTID_6X8M, C_CYAN, "SYSTEM MENU");
+        
+        // Optional: Battery or Time could go here on the right
+
+        // --- 2. Calculate Layout ---
+        int16_t item_height = 18;  // Compact height
+        int16_t list_top = 24;
+        int16_t visible_area_h = screen_h - list_top - 14; // Leave room for footer
+        int16_t max_visible = visible_area_h / item_height;
+        
         static int scroll_offset = 0;
-        if (selected < scroll_offset) {
-            scroll_offset = selected;
-        } else if (selected >= scroll_offset + max_visible_items) {
-            scroll_offset = selected - max_visible_items + 1;
-        }
+        if (selected < scroll_offset) scroll_offset = selected;
+        else if (selected >= scroll_offset + max_visible) scroll_offset = selected - max_visible + 1;
 
-        for (int i = 0; i < MENU_ITEMS_COUNT; i++) {
+        // --- 3. Render Items ---
+        char label[64];
+        char value[32];
+
+        for (int i = scroll_offset; i < MENU_ITEMS_COUNT && i < scroll_offset + max_visible; i++) {
+            int16_t y = list_top + (i - scroll_offset) * item_height;
+            
+            // Prepare Text
+            value[0] = '\0'; // Default empty value
             switch (i) {
-            case MENU_OPEN_CAMERA:
-                snprintf(labels[i], sizeof(labels[i]), "Open Camera");
-                break;
-            case MENU_AUTO_SCALE:
-                snprintf(labels[i], sizeof(labels[i]), "Auto Scale: %s", settingsParms.AutoScaleMode ? "On" : "Off");
-                break;
-            case MENU_SET_MIN_TEMP:
-                snprintf(labels[i], sizeof(labels[i]), "Min Temp: %.1f%s", settingsParms.minTempNew, CELSIUS_SYMBOL);
-                break;
-            case MENU_SET_PALETTE_CENTER:
-                snprintf(labels[i], sizeof(labels[i]), "Palette Center: %d%%", settingsParms.PaletteCenterPercent);
-                break;
-            case MENU_SET_MAX_TEMP:
-                snprintf(labels[i], sizeof(labels[i]), "Max Temp: %.1f%s", settingsParms.maxTempNew, CELSIUS_SYMBOL);
-                break;
-            case MENU_MLX_FPS:
-                {
-                    // Only two options supported in this menu: 16Hz (index 5) and 32Hz (index 6)
-                    bool is32 = (settingsParms.MLX90640FPS >= 6);
-                    snprintf(labels[i], sizeof(labels[i]), "MLX FPS: %s Hz", is32 ? MLX_FPS_STR[6] : MLX_FPS_STR[5]);
-                }
-                break;
-            case MENU_REALTIME_ANALYSIS:
-                snprintf(labels[i], sizeof(labels[i]), "Real-time Data Analysis: %s", settingsParms.RealTimeAnalysis ? "On" : "Off");
-                break;
-            case MENU_VIEW_SCREENSHOTS:
-                snprintf(labels[i], sizeof(labels[i]), "View Screenshots");
-                break;
-            case MENU_DELETE_SCREENSHOTS:
-                snprintf(labels[i], sizeof(labels[i]), "Delete Screenshots");
-                break;
-            default:
-                labels[i][0] = '\0';
-                break;
+                case MENU_OPEN_CAMERA: strcpy(label, "Open Camera"); break;
+                case MENU_AUTO_SCALE: 
+                    strcpy(label, "Auto Scale"); 
+                    snprintf(value, sizeof(value), "[%s]", settingsParms.AutoScaleMode ? "ON" : "OFF");
+                    break;
+                case MENU_SET_MIN_TEMP: 
+                    strcpy(label, "Min Temp"); 
+                    snprintf(value, sizeof(value), "%.1f%s", settingsParms.minTempNew, CELSIUS_SYMBOL);
+                    break;
+                case MENU_SET_PALETTE_CENTER: 
+                    strcpy(label, "Palette Center"); 
+                    snprintf(value, sizeof(value), "%d%%", settingsParms.PaletteCenterPercent);
+                    break;
+                case MENU_SET_MAX_TEMP: 
+                    strcpy(label, "Max Temp"); 
+                    snprintf(value, sizeof(value), "%.1f%s", settingsParms.maxTempNew, CELSIUS_SYMBOL);
+                    break;
+                case MENU_MLX_FPS: 
+                    strcpy(label, "Sensor Rate"); 
+                    snprintf(value, sizeof(value), "%s Hz", (settingsParms.MLX90640FPS >= 6) ? MLX_FPS_STR[6] : MLX_FPS_STR[5]);
+                    break;
+                case MENU_REALTIME_ANALYSIS: 
+                    strcpy(label, "RT Analysis"); 
+                    snprintf(value, sizeof(value), "[%s]", settingsParms.RealTimeAnalysis ? "ON" : "OFF");
+                    break;
+                case MENU_VIEW_SCREENSHOTS: strcpy(label, "Gallery"); break;
+                case MENU_DELETE_SCREENSHOTS: strcpy(label, "Delete Files"); break;
+                default: strcpy(label, "???"); break;
             }
-        }
 
-        // 清除菜单区域
-        dispcolor_FillRect(0, item_top - 5, screen_w, screen_h, BLACK);
-        
-        // 只绘制可见的菜单项
-        for (int i = scroll_offset; i < MENU_ITEMS_COUNT && i < scroll_offset + max_visible_items; i++) {
-            int16_t display_index = i - scroll_offset;
-            int16_t y0 = item_top + display_index * item_height;
-            int16_t y1 = y0 + item_height - 4;
-
-            int16_t dot_x = item_left - 10;
-            int16_t dot_y = y0 + (y1 - y0) / 2;
+            // Draw Item Row
             if (i == selected) {
-                uint16_t dotColor = RGB565(255, 255, 0);
-                dispcolor_DrawCircleFilled(dot_x, dot_y, 3, dotColor);
+                // Selected: Cyan Box, Black Text (Inverted)
+                dispcolor_FillRect(2, y, screen_w - 14, item_height, C_CYAN);
+                dispcolor_printf(6, y + 5, FONTID_6X8M, C_BLACK, "> %s", label);
+                if(value[0]) dispcolor_printf(screen_w - 14 - (strlen(value)*6) - 4, y + 5, FONTID_6X8M, C_BLACK, "%s", value);
+            } else {
+                // Normal: Black Bg, Cyan Text
+                dispcolor_printf(6, y + 5, FONTID_6X8M, C_DCYAN, "  %s", label); // Dim cyan
+                if(value[0]) dispcolor_printf(screen_w - 14 - (strlen(value)*6) - 4, y + 5, FONTID_6X8M, C_DCYAN, "%s", value);
             }
+        }
 
-            // 文本
-            dispcolor_printf(item_left + 4, y0 + 4, FONTID_6X8M, WHITE, "%s", labels[i]);
-        }
-        
-        // 显示滚动指示器
-        if (scroll_offset > 0) {
-            dispcolor_printf(screen_w - 12, item_top, FONTID_6X8M, YELLOW, "^");
-        }
-        if (scroll_offset + max_visible_items < MENU_ITEMS_COUNT) {
-            dispcolor_printf(screen_w - 12, screen_h - 12, FONTID_6X8M, YELLOW, "v");
-        }
-        
+        // --- 4. Draw Scrollbar (Right Side) ---
+        int16_t sb_x = screen_w - 6;
+        int16_t sb_y = list_top;
+        int16_t sb_h = max_visible * item_height;
+        // Track
+        dispcolor_FillRect(sb_x + 2, sb_y, 1, sb_h, C_DCYAN); 
+        // Thumb
+        int16_t thumb_h = (sb_h * max_visible) / MENU_ITEMS_COUNT;
+        if (thumb_h < 4) thumb_h = 4;
+        int16_t thumb_y = sb_y + (scroll_offset * (sb_h - thumb_h)) / (MENU_ITEMS_COUNT - max_visible > 0 ? MENU_ITEMS_COUNT - max_visible : 1);
+        dispcolor_FillRect(sb_x, thumb_y, 5, thumb_h, C_CYAN);
+
+
+        // --- 5. Footer / Status ---
+        dispcolor_FillRect(0, screen_h - 12, screen_w, 1, C_DCYAN);
+        dispcolor_printf(4, screen_h - 10, FONTID_6X8M, C_DCYAN, "UP/DN:NAV  WHEEL:SEL");
+
         dispcolor_Update();
 
-        // wait for wheel/encoder events
-        EventBits_t uxBitsToWaitFor = RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back;
-        EventBits_t bits = xEventGroupWaitBits(pHandleEventGroup, uxBitsToWaitFor, pdTRUE, pdFALSE, portMAX_DELAY);
+        // --- Event Handling (Logic Unchanged) ---
+        EventBits_t bits = xEventGroupWaitBits(pHandleEventGroup, 
+            RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, 
+            pdTRUE, pdFALSE, portMAX_DELAY);
 
-        if ((bits & RENDER_Encoder_Up) == RENDER_Encoder_Up) {
+        if (bits & RENDER_Encoder_Up) {
             if (selected > 0) selected--; else selected = MENU_ITEMS_COUNT - 1;
         }
-        if ((bits & RENDER_Encoder_Down) == RENDER_Encoder_Down) {
+        if (bits & RENDER_Encoder_Down) {
             if (selected < MENU_ITEMS_COUNT - 1) selected++; else selected = 0;
         }
-        if ((bits & RENDER_Wheel_Back) == RENDER_Wheel_Back) {
-            // Wheel left in the main menu enters sleep mode
+        if (bits & RENDER_Wheel_Back) {
             system_enter_deep_sleep();
-            exit = true; // leave menu while device sleeps
+            exit = true;
             continue;
         }
 
-        if ((bits & RENDER_Wheel_Confirm) == RENDER_Wheel_Confirm) {
-            // perform a minimal action per item
+        if (bits & RENDER_Wheel_Confirm) {
             switch (selected) {
-            case MENU_OPEN_CAMERA:
-                exit = true; // 返回实时画面
-                break;
-            case MENU_AUTO_SCALE:
-                settingsParms.AutoScaleMode = !settingsParms.AutoScaleMode;
-                settings_write_all();
-                break;
-            case MENU_MLX_FPS: {
-                // Interactive adjust loop for MLX90640 FPS index (0..7)
-                // Only allow two choices: 16Hz (index 5) and 32Hz (index 6)
-                uint8_t v = (settingsParms.MLX90640FPS >= 6) ? 6 : 5;
-                bool done = false;
-                // clear the menu list area to avoid interference and draw prompt area
-                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                // redraw title
-                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
-                while (!done) {
-                    dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                    dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set MLX FPS: %s Hz", MLX_FPS_STR[v]);
-                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:toggle, Wheel:save/cancel");
-                    dispcolor_Update();
-
-                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
-                    if (bits2 & (RENDER_Encoder_Up | RENDER_Encoder_Down)) {
-                        // toggle between 16Hz (5) and 32Hz (6)
-                        v = (v == 5) ? 6 : 5;
-                    }
-
-                    if (bits2 & RENDER_Wheel_Confirm) {
-                        settingsParms.MLX90640FPS = v;
-                        settings_write_all();
-                        // apply immediately to sensor
-                        mlx90640_flushRate();
-                        // enable low quality render if 32Hz selected
-                        lowQualityRender = (v == 6);
-                        // confirmation
-                        dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                        dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "MLX FPS set: %s Hz", MLX_FPS_STR[v]);
-                        if (lowQualityRender) dispcolor_printf(28, 136, FONTID_6X8M, WHITE, "LowQuality render: ON");
-                        else dispcolor_printf(28, 136, FONTID_6X8M, WHITE, "LowQuality render: OFF");
-                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-
+                case MENU_OPEN_CAMERA:
+                    exit = true; 
+                    break;
+                case MENU_AUTO_SCALE:
+                    settingsParms.AutoScaleMode = !settingsParms.AutoScaleMode;
+                    settings_write_all();
+                    break;
+                case MENU_MLX_FPS: {
+                    uint8_t v = (settingsParms.MLX90640FPS >= 6) ? 6 : 5;
+                    bool done = false;
+                    while (!done) {
+                        draw_adjust_overlay("SENSOR RATE", MLX_FPS_STR[v], "UP/DN:Chg OK:Save");
                         dispcolor_Update();
-                        vTaskDelay(600 / portTICK_PERIOD_MS);
-                        done = true;
-                    }
-                    if (bits2 & RENDER_Wheel_Back) {
-                        // cancel: clear adjustment area before returning to main menu
-                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                        done = true;
-                    }
-                }
-            } break;
-            case MENU_SET_MIN_TEMP: {
-                // Interactive adjust loop for min temp
-                float v = settingsParms.minTempNew;
-                bool done = false;
-                // clear the menu list area to avoid interference and draw prompt area
-                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                // redraw title
-                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
-                while (!done) {
-                    dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                    dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set Min Temp: %.1f%s", v, CELSIUS_SYMBOL);
-                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:adjust, Wheel:save/cancel");
-                    dispcolor_Update();
 
-                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
-                    if (bits2 & RENDER_Encoder_Up) {
-                        v += 1.0f;
+                        EventBits_t b2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                        if (b2 & (RENDER_Encoder_Up | RENDER_Encoder_Down)) v = (v == 5) ? 6 : 5;
+                        if (b2 & RENDER_Wheel_Confirm) {
+                            settingsParms.MLX90640FPS = v;
+                            settings_write_all();
+                            mlx90640_flushRate();
+                            lowQualityRender = (v == 6);
+                            done = true;
+                        }
+                        if (b2 & RENDER_Wheel_Back) done = true;
+                        // Force redraw main menu bg next loop
                     }
-                    if (bits2 & RENDER_Encoder_Down) {
-                        v -= 1.0f;
-                    }
-                    // clamp so that max - min >= MIN_TEMPSCALE_DELTA
-                    if (v > settingsParms.maxTempNew - MIN_TEMPSCALE_DELTA) v = settingsParms.maxTempNew - MIN_TEMPSCALE_DELTA;
-                    if (v < -50.0f) v = -50.0f;
-
-                    if (bits2 & RENDER_Wheel_Confirm) {
-                        settingsParms.minTempNew = v;
-                        settings_write_all();
-                        // confirmation
-                        dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                        dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "Min temp set: %.1f%s", v, CELSIUS_SYMBOL);
+                } break;
+                case MENU_SET_MIN_TEMP: {
+                    float v = settingsParms.minTempNew;
+                    bool done = false;
+                    while (!done) {
+                        char buf[16]; snprintf(buf, 16, "%.1f C", v);
+                        draw_adjust_overlay("MIN TEMP", buf, "UP/DN:Adj OK:Save");
                         dispcolor_Update();
-                        vTaskDelay(600 / portTICK_PERIOD_MS);
-                        done = true;
-                    }
-                    if (bits2 & RENDER_Wheel_Back) {
-                        // cancel: clear adjustment area before returning to main menu
-                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                        done = true;
-                    }
-                }
-            } break;
-            case MENU_SET_PALETTE_CENTER: {
-                // Interactive adjust loop for palette center percent (0-100)
-                uint8_t v = settingsParms.PaletteCenterPercent;
-                bool done = false;
-                // clear the menu list area to avoid interference and draw prompt area
-                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                // redraw title
-                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
-                while (!done) {
-                    dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                    dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Palette Center: %d%%", v);
-                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:adjust, Wheel:save/cancel");
-                    dispcolor_Update();
 
-                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
-                    if (bits2 & RENDER_Encoder_Up) {
-                        if (v < 100) v++;
+                        EventBits_t b2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                        if (b2 & RENDER_Encoder_Up) v += 1.0f;
+                        if (b2 & RENDER_Encoder_Down) v -= 1.0f;
+                        if (v > settingsParms.maxTempNew - MIN_TEMPSCALE_DELTA) v = settingsParms.maxTempNew - MIN_TEMPSCALE_DELTA;
+                        if (v < -50.0f) v = -50.0f;
+                        if (b2 & RENDER_Wheel_Confirm) {
+                            settingsParms.minTempNew = v;
+                            settings_write_all();
+                            done = true;
+                        }
+                        if (b2 & RENDER_Wheel_Back) done = true;
                     }
-                    if (bits2 & RENDER_Encoder_Down) {
-                        if (v > 0) v--;
-                    }
+                } break;
+                case MENU_SET_PALETTE_CENTER: {
+                    uint8_t v = settingsParms.PaletteCenterPercent;
+                    bool done = false;
+                    while (!done) {
+                        char buf[16]; snprintf(buf, 16, "%d %%", v);
+                        draw_adjust_overlay("PALETTE CTR", buf, "UP/DN:Adj OK:Save");
+                        dispcolor_Update();
 
-                    if (bits2 & RENDER_Wheel_Confirm) {
-                        settingsParms.PaletteCenterPercent = v;
-                        settings_write_all();
-                        // confirmation
-                        dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                        dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "Palette center set: %d%%", v);
+                        EventBits_t b2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                        if (b2 & RENDER_Encoder_Up && v < 100) v++;
+                        if (b2 & RENDER_Encoder_Down && v > 0) v--;
+                        if (b2 & RENDER_Wheel_Confirm) {
+                            settingsParms.PaletteCenterPercent = v;
+                            settings_write_all();
+                            done = true;
+                        }
+                        if (b2 & RENDER_Wheel_Back) done = true;
+                    }
+                } break;
+                case MENU_SET_MAX_TEMP: {
+                    float v = settingsParms.maxTempNew;
+                    bool done = false;
+                    while (!done) {
+                        char buf[16]; snprintf(buf, 16, "%.1f C", v);
+                        draw_adjust_overlay("MAX TEMP", buf, "UP/DN:Adj OK:Save");
                         dispcolor_Update();
-                        vTaskDelay(600 / portTICK_PERIOD_MS);
-                        done = true;
-                    }
-                    if (bits2 & RENDER_Wheel_Back) {
-                        // cancel: clear adjustment area before returning to main menu
-                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                        done = true;
-                    }
-                }
-            } break;
-            case MENU_SET_MAX_TEMP: {
-                // Interactive adjust loop for max temp
-                float v = settingsParms.maxTempNew;
-                bool done = false;
-                // clear the menu list area to avoid interference and draw prompt area
-                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                // redraw title
-                dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
-                while (!done) {
-                    dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                    dispcolor_printf(28, 108, FONTID_6X8M, WHITE, "Set Max Temp: %.1f%s", v, CELSIUS_SYMBOL);
-                    dispcolor_printf(28, 128, FONTID_6X8M, WHITE, "Encoder:adjust, Wheel:save/cancel");
-                    dispcolor_Update();
 
-                    EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
-                    if (bits2 & RENDER_Encoder_Up) {
-                        v += 1.0f;
+                        EventBits_t b2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                        if (b2 & RENDER_Encoder_Up) v += 1.0f;
+                        if (b2 & RENDER_Encoder_Down) v -= 1.0f;
+                        if (v < settingsParms.minTempNew + MIN_TEMPSCALE_DELTA) v = settingsParms.minTempNew + MIN_TEMPSCALE_DELTA;
+                        if (v > 500.0f) v = 500.0f;
+                        if (b2 & RENDER_Wheel_Confirm) {
+                            settingsParms.maxTempNew = v;
+                            settings_write_all();
+                            done = true;
+                        }
+                        if (b2 & RENDER_Wheel_Back) done = true;
                     }
-                    if (bits2 & RENDER_Encoder_Down) {
-                        v -= 1.0f;
-                    }
-                    // clamp so that max - min >= MIN_TEMPSCALE_DELTA
-                    if (v < settingsParms.minTempNew + MIN_TEMPSCALE_DELTA) v = settingsParms.minTempNew + MIN_TEMPSCALE_DELTA;
-                    if (v > 500.0f) v = 500.0f;
-
-                    if (bits2 & RENDER_Wheel_Confirm) {
-                        settingsParms.maxTempNew = v;
-                        settings_write_all();
-                        dispcolor_FillRect(20, 100, dispcolor_getWidth() - 20, 160, BLACK);
-                        dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "Max temp set: %.1f%s", v, CELSIUS_SYMBOL);
-                        dispcolor_Update();
-                        vTaskDelay(600 / portTICK_PERIOD_MS);
-                        done = true;
-                    }
-                    if (bits2 & RENDER_Wheel_Back) {
-                        // cancel: clear adjustment area before returning to main menu
-                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                        done = true;
-                    }
-                }
-            } break;
-            case MENU_REALTIME_ANALYSIS:
-                settingsParms.RealTimeAnalysis = !settingsParms.RealTimeAnalysis;
-                settings_write_all();
-                break;
-            case MENU_VIEW_SCREENSHOTS: {
-                // 查看截图子菜单
-                char fileList[20][32];
-                int fileCount = save_listBmpFiles(fileList, 20);
-                
-                if (fileCount <= 0) {
-                    dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                    dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "No screenshots found");
-                    dispcolor_Update();
-                    vTaskDelay(1000 / portTICK_PERIOD_MS);
-                } else {
-                    int viewIndex = 0;
-                    bool viewDone = false;
-                    
-                    while (!viewDone) {
-                        // 显示文件列表
-                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                        // dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "View Screenshots");
-                        dispcolor_printf(28, 56, FONTID_6X8M, WHITE, "File %d/%d: %s", viewIndex + 1, fileCount, fileList[viewIndex]);
-                        dispcolor_printf(28, 76, FONTID_6X8M, WHITE, "Encoder:select, R:view, L:back");
-                        dispcolor_Update();
-                        
-                        EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
-                        
-                        if (bits2 & RENDER_Encoder_Up) {
-                            if (viewIndex > 0) viewIndex--; else viewIndex = fileCount - 1;
-                        }
-                        if (bits2 & RENDER_Encoder_Down) {
-                            if (viewIndex < fileCount - 1) viewIndex++; else viewIndex = 0;
-                        }
-                        if (bits2 & RENDER_Wheel_Confirm) {
-                            // 显示选中的图片
-                            dispcolor_FillRect(0, 0, screen_w, screen_h, BLACK);
-                            if (save_viewBmpFile(fileList[viewIndex]) == 0) {
-                                // 显示文件名在底部
-                                dispcolor_printf(4, screen_h - 12, FONTID_6X8M, WHITE, "%s - Wheel:back", fileList[viewIndex]);
-                                dispcolor_Update();
-                                // 等待返回
-                                xEventGroupWaitBits(pHandleEventGroup, RENDER_Wheel_Back | RENDER_Wheel_Confirm, pdTRUE, pdFALSE, portMAX_DELAY);
-                            } else {
-                                dispcolor_printf(28, 118, FONTID_6X8M, RED, "Failed to load image");
-                                dispcolor_Update();
-                                vTaskDelay(1000 / portTICK_PERIOD_MS);
-                            }
-                            // 重绘菜单背景
-                            dispcolor_FillRect(0, 0, screen_w, screen_h, BLACK);
-                            dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Simple Menu");
-                        }
-                        if (bits2 & RENDER_Wheel_Back) {
-                            viewDone = true;
-                        }
-                    }
-                }
-                // 清理并重绘主菜单
-                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-            } break;
-            case MENU_DELETE_SCREENSHOTS: {
-                // 删除截图子菜单
-                char fileList[20][32];
-                int fileCount = save_listBmpFiles(fileList, 20);
-                
-                if (fileCount <= 0) {
-                    dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                    dispcolor_printf(28, 118, FONTID_6X8M, WHITE, "No screenshots to delete");
-                    dispcolor_Update();
-                    vTaskDelay(1000 / portTICK_PERIOD_MS);
-                } else {
-                    int delIndex = 0;  // 0 = 选择单个文件, 最后一项 = 删除全部
-                    bool delDone = false;
-                    
-                    while (!delDone) {
-                        dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                        // dispcolor_printf(title_x, title_y, FONTID_16F, WHITE, "Delete Screenshots");
-                        
-                        if (delIndex < fileCount) {
-                            dispcolor_printf(28, 56, FONTID_6X8M, WHITE, "File %d/%d: %s", delIndex + 1, fileCount, fileList[delIndex]);
-                        } else {
-                            dispcolor_printf(28, 56, FONTID_6X8M, YELLOW, "** DELETE ALL (%d files) **", fileCount);
-                        }
-                        dispcolor_printf(28, 76, FONTID_6X8M, WHITE, "Encoder:select, R:delete, L:back");
-                        dispcolor_Update();
-                        
-                        EventBits_t bits2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
-                        
-                        if (bits2 & RENDER_Encoder_Up) {
-                            if (delIndex > 0) delIndex--; else delIndex = fileCount; // 包含"删除全部"选项
-                        }
-                        if (bits2 & RENDER_Encoder_Down) {
-                            if (delIndex < fileCount) delIndex++; else delIndex = 0;
-                        }
-                        if (bits2 & RENDER_Wheel_Confirm) {
-                            dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-                            
-                            if (delIndex < fileCount) {
-                                // 删除单个文件
-                                if (save_deleteBmpFile(fileList[delIndex]) == 0) {
-                                    dispcolor_printf(28, 118, FONTID_6X8M, GREEN, "Deleted: %s", fileList[delIndex]);
-                                } else {
-                                    dispcolor_printf(28, 118, FONTID_6X8M, RED, "Delete failed!");
-                                }
-                            } else {
-                                // 删除全部
-                                int deleted = save_deleteAllBmpFiles();
-                                if (deleted > 0) {
-                                    dispcolor_printf(28, 118, FONTID_6X8M, GREEN, "Deleted %d files", deleted);
-                                } else {
-                                    dispcolor_printf(28, 118, FONTID_6X8M, RED, "Delete failed!");
-                                }
-                            }
+                } break;
+                case MENU_REALTIME_ANALYSIS:
+                    settingsParms.RealTimeAnalysis = !settingsParms.RealTimeAnalysis;
+                    settings_write_all();
+                    break;
+                case MENU_VIEW_SCREENSHOTS: {
+                    // Simple viewer - Redraws logic to match style
+                    char fileList[20][32];
+                    int fileCount = save_listBmpFiles(fileList, 20);
+                    if (fileCount <= 0) {
+                         draw_adjust_overlay("GALLERY", "Empty", "No files found");
+                         dispcolor_Update();
+                         vTaskDelay(1000 / portTICK_PERIOD_MS);
+                    } else {
+                        int viewIndex = 0;
+                        bool viewDone = false;
+                        while (!viewDone) {
+                            draw_adjust_overlay("GALLERY", fileList[viewIndex], "ENC:Sel OK:View");
+                             // Add counter
+                            char ctr[32]; snprintf(ctr, sizeof(ctr), "%d/%d", viewIndex+1, fileCount);
+                            int16_t cx = (screen_w - 200)/2 + 180;
+                            dispcolor_printf(cx, (screen_h-80)/2 + 4, FONTID_6X8M, C_BLACK, "%s", ctr);
                             dispcolor_Update();
-                            vTaskDelay(1000 / portTICK_PERIOD_MS);
-                            
-                            // 重新获取文件列表
-                            fileCount = save_listBmpFiles(fileList, 20);
-                            if (fileCount <= 0) {
-                                delDone = true;
-                            } else {
-                                delIndex = 0;
+
+                            EventBits_t b2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                            if (b2 & RENDER_Encoder_Up) { if (viewIndex > 0) viewIndex--; else viewIndex = fileCount - 1; }
+                            if (b2 & RENDER_Encoder_Down) { if (viewIndex < fileCount - 1) viewIndex++; else viewIndex = 0; }
+                            if (b2 & RENDER_Wheel_Confirm) {
+                                dispcolor_FillRect(0, 0, screen_w, screen_h, C_BLACK);
+                                if (save_viewBmpFile(fileList[viewIndex]) == 0) {
+                                    dispcolor_printf(4, screen_h - 12, FONTID_6X8M, C_WHITE, "%s", fileList[viewIndex]);
+                                    dispcolor_Update();
+                                    xEventGroupWaitBits(pHandleEventGroup, RENDER_Wheel_Back | RENDER_Wheel_Confirm, pdTRUE, pdFALSE, portMAX_DELAY);
+                                }
                             }
-                        }
-                        if (bits2 & RENDER_Wheel_Back) {
-                            delDone = true;
+                            if (b2 & RENDER_Wheel_Back) viewDone = true;
                         }
                     }
-                }
-                // 清理并重绘主菜单
-                dispcolor_FillRect(0, 40, screen_w, screen_h - 40, BLACK);
-            } break;
+                } break;
+                case MENU_DELETE_SCREENSHOTS: {
+                     // Similar style for delete
+                     // ... (Abbreviated for length, follows same pattern) ...
+                     char fileList[20][32];
+                     int fileCount = save_listBmpFiles(fileList, 20);
+                     if (fileCount <= 0) {
+                         draw_adjust_overlay("DELETE", "Empty", "No files");
+                         dispcolor_Update();
+                         vTaskDelay(1000 / portTICK_PERIOD_MS);
+                     } else {
+                         int delIndex = 0;
+                         bool delDone = false;
+                         while(!delDone) {
+                             char* fname = (delIndex < fileCount) ? fileList[delIndex] : "ALL FILES";
+                             draw_adjust_overlay("DELETE FILE", fname, "OK:Delete L:Back");
+                             if (delIndex == fileCount) dispcolor_printf((screen_w-200)/2 + 20, (screen_h-80)/2 + 30, FONTID_16F, 0xF800, "ALL FILES"); // Red text for ALL
+                             dispcolor_Update();
+
+                             EventBits_t b2 = xEventGroupWaitBits(pHandleEventGroup, RENDER_Encoder_Up | RENDER_Encoder_Down | RENDER_Wheel_Confirm | RENDER_Wheel_Back, pdTRUE, pdFALSE, portMAX_DELAY);
+                             if (b2 & RENDER_Encoder_Up) { if (delIndex > 0) delIndex--; else delIndex = fileCount; }
+                             if (b2 & RENDER_Encoder_Down) { if (delIndex < fileCount) delIndex++; else delIndex = 0; }
+                             if (b2 & RENDER_Wheel_Confirm) {
+                                 if (delIndex < fileCount) save_deleteBmpFile(fileList[delIndex]);
+                                 else save_deleteAllBmpFiles();
+                                 fileCount = save_listBmpFiles(fileList, 20);
+                                 if (fileCount <= 0) delDone = true;
+                                 else delIndex = 0;
+                             }
+                             if (b2 & RENDER_Wheel_Back) delDone = true;
+                         }
+                     }
+                } break;
             }
-        }
-        if ((bits & RENDER_Wheel_Back) == RENDER_Wheel_Back) {
-            exit = true; // wheel left exits menu
         }
     }
 
-    // clear full screen when exiting menu
-    dispcolor_FillRect(0, 0, screen_w, screen_h, BLACK);
+    dispcolor_FillRect(0, 0, screen_w, screen_h, C_BLACK);
     dispcolor_Update();
-
     return 0;
 }
