@@ -27,8 +27,8 @@ typedef union _uRGB565
 
 
 //画笔颜色
-#define WHITE 0xFFFF
-#define BLACK 0x0000
+#define WHITE 0x0000
+#define BLACK 0xFFFF
 #define BLUE 0x001F
 #define BRED 0xF81F
 #define GBLUE 0x07FF
@@ -102,6 +102,8 @@ int16_t dispcolor_getFormatStrWidth(uint8_t FontID, const char *args, ...);
 void dispcolor_screenDark(void);
 // 复制显存数据到指定内存
 void dispcolor_getScreenData(uint16_t *pBuff);
+// 复制一行显存数据到指定内存（节省内存版本）
+void dispcolor_getRowData(uint16_t row, uint16_t *pBuff);
 
 
 #endif

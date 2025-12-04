@@ -8,6 +8,7 @@
 #include "driver/gpio.h"
 #include "wheel.h"
 #include "siq02.h"
+#include "esp_spiffs.h"
 
 EventGroupHandle_t pHandleEventGroup = NULL;
 SemaphoreHandle_t pSPIMutex = NULL;
@@ -35,6 +36,22 @@ void app_main()
     pSPIMutex = xSemaphoreCreateMutex();
 
     gpio_hold_dis(GPIO_NUM_5);
+
+    // 初始化 SPIFFS 文件系统
+    esp_vfs_spiffs_conf_t spiffs_conf = {
+        .base_path = "/spiffs",
+        .partition_label = "storage",
+        .max_files = 5,
+        .format_if_mount_failed = true
+    };
+    esp_err_t spiffs_ret = esp_vfs_spiffs_register(&spiffs_conf);
+    if (spiffs_ret == ESP_OK) {
+        size_t total = 0, used = 0;
+        esp_spiffs_info(spiffs_conf.partition_label, &total, &used);
+        printf("SPIFFS mounted: total=%d bytes, used=%d bytes\n", (int)total, (int)used);
+    } else {
+        printf("Failed to mount SPIFFS (error %d)\n", spiffs_ret);
+    }
 
     // 初始化显示
     dispcolor_Init();

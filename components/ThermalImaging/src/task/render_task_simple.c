@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include "simple_menu.h"
 #include "settings.h"
+#include "save.h"
 
 
 #define TEMP_SCALE 10  // 温度放大倍数，与render_task.c一致
@@ -241,6 +242,13 @@ static float actual_fps = 0.0f;
 static float lastFrameMinTemp = 0.0f;
 static float lastFrameMaxTemp = 0.0f;
 
+// 临时固定量程状态（按下 fix_scale 时生效 N 秒，然后恢复）
+static bool fixScaleTempActive = false;
+static TickType_t fixScaleExpireTick = 0;
+static uint8_t fixScalePrevAutoMode = 0;
+static float fixScalePrevMin = 0.0f;
+static float fixScalePrevMax = 0.0f;
+
 // 图像缓冲区 - 参考render_task.c的优化
 static int16_t* TermoImage16 = NULL;  // 热成像整数缓冲区（温度*10）
 static int16_t* TermoHqImage16 = NULL; // 高质量插值后的图像
@@ -397,7 +405,7 @@ void render_task(void* arg)
             
             // 副标题 "Thermal Camera" - 淡入效果（后半段才显示）
             if (progress > 0.4f) {
-                float sub_progress = (progress - 0.4f) / 0.6f; // 0 ~ 1
+                float sub_progress = (1.0f - progress) / 0.6f; // 0 ~ 1(1.0f - progress) / 0.6f
                 int16_t sub_w = dispcolor_getStrWidth(FONTID_6X8M, sub_text);
                 int16_t sub_x = (screen_w - sub_w) / 2;
                 int16_t sub_y = (screen_h / 2) + 10;
@@ -521,6 +529,7 @@ void render_task(void* arg)
             dispcolor_FillRect(0, 0, dispcolor_getWidth(), top_bar_h, BLACK);      // 顶部标题区域
             dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);    // 底部信息区域
             dispcolor_FillRect(0, 20, 10, 165, BLACK);      // 热成像左侧区域
+            dispcolor_FillRect(230, 20, 10, 165, BLACK);      // 热成像右侧区域
 
 
             // 显示标题（根据字体高度垂直居中）
@@ -530,8 +539,6 @@ void render_task(void* arg)
             if (title_y < 0) title_y = 0;
             // dispcolor_DrawString(10, title_y, FONTID_16F, (uint8_t*)"Thermal Camera", WHITE);
             int16_t title_x = dispcolor_getStrWidth(FONTID_16F, "Palette 5");
-            int16_t title_x2 = dispcolor_getStrWidth(FONTID_16F, "BOM");
-
             title_x = (dispcolor_getWidth() - title_x) / 2;
             
             // 标题高亮改为背景灰色高亮（字体默认白色）
@@ -560,7 +567,7 @@ void render_task(void* arg)
                     } else if (currentTitleSubSelection == TITLE_SUB_CENTER) {
                         // center area: center text location at title_x+10
                         // centerTitleColor = SelectMode ? BLACK : WHITE;
-                        const char* centerText = "auto_scale";
+                        const char* centerText = "fix_scale";
                         int16_t w = dispcolor_getStrWidth(FONTID_16F, (char*)centerText);
                         int16_t cx = title_x + 10;
                         dispcolor_FillRect(cx - 2, top_y, w + 4, title_h, GRAY);
@@ -833,6 +840,26 @@ void render_task(void* arg)
             // 更新显示
             st7789_update();
             perf_lcd = xTaskGetTickCount();
+
+            // 检查临时 fix-scale 是否已到期，如果到期则恢复原始设置（不持久化）
+            if (fixScaleTempActive) {
+                TickType_t now = xTaskGetTickCount();
+                if (now >= fixScaleExpireTick) {
+                    // 恢复之前的 AutoScale 与量程
+                    settingsParms.AutoScaleMode = fixScalePrevAutoMode;
+                    settingsParms.minTempNew = fixScalePrevMin;
+                    settingsParms.maxTempNew = fixScalePrevMax;
+
+                    fixScaleTempActive = false;
+
+                    // 显示提示并触发重绘
+                    snprintf(overlay_line1, sizeof(overlay_line1), "AutoScale restored");
+                    overlay_line2[0] = '\0';
+                    overlay_active = true;
+                    overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+                    forceRender = true;
+                }
+            }
             
             // 性能分析输出
             if (frame_count % 30 == 0) { // 每30帧输出一次
@@ -891,26 +918,46 @@ void render_task(void* arg)
             } else if (!subItemMode) {
                 // 进入子项选择模式
                 subItemMode = true;
-            } else {
-                // 已在子项模式
-                if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_LEFT) {
-                    // 在palette子项，进入调色板选择模式
-                    paletteSelectMode = true;
-                } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_CENTER) {
-                        // 在 auto_scale 子项，按下确认将把当前 MLX 帧的原始 min/max 写入为固定量程并关闭 AutoScale
-                        settingsParms.AutoScaleMode = false;
-                        // 使用帧的原始 min/max（lastFrameMinTemp/lastFrameMaxTemp）而不是 display-adjusted 值
-                        settingsParms.minTempNew = lastFrameMinTemp;
-                        settingsParms.maxTempNew = lastFrameMaxTemp;
-                    settings_write_all();
-                    // 退出子项选择模式并提示
-                    subItemMode = false;
-                    snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale: %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
-                    overlay_line2[0] = '\0';
-                    overlay_active = true;
-                    overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
-                    forceRender = true;
-                } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
+                } else {
+                    // 已在子项模式
+                    if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_LEFT) {
+                        // 在palette子项，进入调色板选择模式
+                        paletteSelectMode = true;
+                    } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_CENTER) {
+                        // 在 fix_scale 子项，按下确认临时固定当前帧的原始 min/max（仅保留 5 秒），然后恢复原设置
+                        if (!fixScaleTempActive) {
+                            // 保存原始设置以便恢复
+                            fixScalePrevAutoMode = settingsParms.AutoScaleMode;
+                            fixScalePrevMin = settingsParms.minTempNew;
+                            fixScalePrevMax = settingsParms.maxTempNew;
+
+                            // 应用临时固定量程（不持久化到 NVS）
+                            settingsParms.AutoScaleMode = false;
+                            settingsParms.minTempNew = lastFrameMinTemp;
+                            settingsParms.maxTempNew = lastFrameMaxTemp;
+
+                            // 启动 5 秒定时器
+                            fixScaleTempActive = true;
+                            fixScaleExpireTick = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
+
+                            // 退出子项选择模式并提示（说明为临时固定）
+                            subItemMode = false;
+                            snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale (5s): %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
+                            overlay_line2[0] = '\0';
+                            overlay_active = true;
+                            overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+                            forceRender = true;
+                        } else {
+                            // 如果已经处于临时固定状态，刷新过期时间并更新值
+                            settingsParms.minTempNew = lastFrameMinTemp;
+                            settingsParms.maxTempNew = lastFrameMaxTemp;
+                            fixScaleExpireTick = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
+                            snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale (5s refreshed): %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
+                            overlay_active = true;
+                            overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+                            forceRender = true;
+                        }
+                    } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
                     // 在温度单位子项，进入温度单位选择模式
                     tempUnitSelectMode = true;
                 } else if (currentFocus == SECTION_DATA && currentDataSubSelection == DATA_SUB_RIGHT) {
@@ -1046,10 +1093,26 @@ void render_task(void* arg)
             }
         }
         
-        // SIQ02 编码器按下：在图像区域切换十字线
+        // SIQ02 编码器按下：在图像区域按下则保存当前屏幕为BMP到SD卡（使用现有save模块）
         if (bits & RENDER_Encoder_Press) {
             if (currentFocus == SECTION_IMAGE) {
-                showImageCrosshair = !showImageCrosshair;
+                // 尝试保存24位BMP（full color）
+                int save_ret = save_ImageBMP(24);
+                if (save_ret == 0) {
+                    // 成功，显示短暂覆盖提示
+                    snprintf(overlay_line1, sizeof(overlay_line1), "Screenshot saved to SPIFFS");
+                    overlay_line2[0] = '\0';
+                    overlay_active = true;
+                    overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+                    forceRender = true;
+                } else {
+                    // 失败，save_ImageBMP 已用 message_show 报错，这里也用覆盖提示以便在不插SD的情况下提醒
+                    snprintf(overlay_line1, sizeof(overlay_line1), "Save failed");
+                    overlay_line2[0] = '\0';
+                    overlay_active = true;
+                    overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+                    forceRender = true;
+                }
             }
         }
 

@@ -39,6 +39,9 @@ void st7789_update(void);
 // 复制显存数据到指定内存
 void st7789_getScreenData(uint16_t *pBuff);
 
+// 复制一行显存数据到指定内存（节省内存版本）
+void st7789_getRowData(uint16_t row, uint16_t *pBuff);
+
 // 该过程返回一个像素的颜色
 uint16_t st7789_GetPixel(int16_t x, int16_t y);
 #endif

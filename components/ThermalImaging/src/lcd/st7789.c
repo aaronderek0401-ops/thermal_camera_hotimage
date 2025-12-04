@@ -573,6 +573,22 @@ void st7789_getScreenData(uint16_t* pBuff)
 }
 
 /**
+ * @brief 复制一行显存数据到指定内存（节省内存版本）
+ *
+ * @param row 行号
+ * @param pBuff 目标内存（需要能容纳一行数据）
+ */
+void st7789_getRowData(uint16_t row, uint16_t* pBuff)
+{
+#ifdef CONFIG_ESP32_SPI_ST7789_LCD
+    if (row >= lcddev.height) return;
+    uint16_t* src = &ScreenBuff[row * lcddev.width];
+    for (uint16_t col = 0; col < lcddev.width; col++, pBuff++, src++)
+        *pBuff = (*src >> 8) | (*src << 8);
+#endif // CONFIG_ESP32_SPI_ST7789_LCD
+}
+
+/**
  * @brief 获取指定位置的颜色
  *
  * @param x 指定位置横坐标

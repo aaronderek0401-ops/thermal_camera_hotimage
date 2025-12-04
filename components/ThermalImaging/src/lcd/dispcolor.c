@@ -598,3 +598,16 @@ void dispcolor_getScreenData(uint16_t* pBuff)
     st7789_getScreenData(pBuff);
 #endif
 }
+
+/**
+ * @brief 复制一行显存数据到指定内存（节省内存版本）
+ *
+ * @param row 行号
+ * @param pBuff 目标内存
+ */
+void dispcolor_getRowData(uint16_t row, uint16_t* pBuff)
+{
+#if (ST7789_MODE == ST7789_BUFFER_MODE)
+    st7789_getRowData(row, pBuff);
+#endif
+}

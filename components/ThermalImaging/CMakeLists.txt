@@ -3,7 +3,7 @@ set(ThermalImaging_srcs
     "src/func.c"
     "src/menu.c"
     "src/simple_menu.c"
-    # "src/save.c"
+    "src/save.c"
     "src/messagebox.c"
     "src/settings.c"
     "src/sleep.c"
@@ -44,4 +44,5 @@ set(interpolation_srcs
 
 idf_component_register(SRCS "${ThermalImaging_srcs}" "${lcd_srcs}" "${task_srcs}" "${iic_srcs}" "${interpolation_srcs}"
                        INCLUDE_DIRS "include" "include/lcd" "include/tasks" "include/tools" "include/iic"
-                       REQUIRES driver esp_adc spi_flash nvs_flash esp_wifi)
+                       REQUIRES driver esp_adc spi_flash nvs_flash esp_wifi
+                       PRIV_REQUIRES esp_psram spiffs)
