@@ -258,6 +258,7 @@ static tRGBcolor* pPaletteImage = NULL;  // 伪彩色调色板
 typedef enum {
     SECTION_TITLE = 0,
     SECTION_IMAGE,
+    SECTION_LOCK,
     SECTION_DATA,
     SECTION_COUNT
 } focus_section_t;
@@ -319,16 +320,67 @@ static char overlay_line1[64] = {0};
 static char overlay_line2[64] = {0};
 static TickType_t overlay_expire_tick = 0;
 
+static void apply_fix_scale(bool exitSubItem)
+{
+    if (!fixScaleTempActive) {
+        // Save previous scaling to restore after timeout
+        fixScalePrevAutoMode = settingsParms.AutoScaleMode;
+        fixScalePrevMin = settingsParms.minTempNew;
+        fixScalePrevMax = settingsParms.maxTempNew;
+
+        settingsParms.AutoScaleMode = false;
+        settingsParms.minTempNew = lastFrameMinTemp;
+        settingsParms.maxTempNew = lastFrameMaxTemp;
+
+        fixScaleTempActive = true;
+        fixScaleExpireTick = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
+
+        if (exitSubItem) {
+            subItemMode = false;
+        }
+
+        snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale (5s): %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
+        overlay_line2[0] = '\0';
+        overlay_active = true;
+        overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+        forceRender = true;
+    } else {
+        settingsParms.minTempNew = lastFrameMinTemp;
+        settingsParms.maxTempNew = lastFrameMaxTemp;
+        fixScaleExpireTick = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
+
+        snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale (5s refreshed): %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
+        overlay_active = true;
+        overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+        forceRender = true;
+    }
+}
+
+static void DrawLockIcon(int16_t x, int16_t y, uint16_t color)
+{
+    // Small padlock: shackle + body + keyhole
+    dispcolor_DrawLine(x - 2, y - 3, x + 2, y - 3, color);
+    dispcolor_DrawLine(x - 3, y - 2, x - 3, y - 1, color);
+    dispcolor_DrawLine(x + 3, y - 2, x + 3, y - 1, color);
+    dispcolor_DrawRectangle(x - 3, y - 1, x + 3, y + 3, color);
+    dispcolor_DrawLine(x, y, x, y + 2, color);
+}
+
 static void DrawSectionFocus(focus_section_t focus,
                              uint16_t top_bar_h,
                              uint16_t bottom_bar_h,
                              uint16_t img_y_start,
-                             uint16_t img_height)
+                             uint16_t img_height,
+                             bool lockActive)
 {
     const int16_t xPos = 4;
     int16_t yPos[SECTION_COUNT];
     yPos[SECTION_TITLE] = top_bar_h / 2;
     yPos[SECTION_IMAGE] = img_y_start + (img_height / 2);
+    // Lock focus sits between the image bottom and data bar center
+    int16_t gap_top = img_y_start + img_height;
+    int16_t gap_bottom = dispcolor_getHeight() - (bottom_bar_h / 2);
+    yPos[SECTION_LOCK] = gap_top ;
     yPos[SECTION_DATA] = dispcolor_getHeight() - (bottom_bar_h / 2);
 
     // for (int i = 0; i < SECTION_COUNT; i++) {
@@ -336,8 +388,18 @@ static void DrawSectionFocus(focus_section_t focus,
     // }
 
     // dispcolor_DrawCircleFilled(xPos, yPos[focus], 2, RGB565(255, 255, 0));
-    dispcolor_printf(xPos, yPos[focus], FONTID_6X8M, WHITE, ">");
+    if (focus != SECTION_LOCK){
+        dispcolor_printf(xPos, yPos[focus], FONTID_6X8M, WHITE, ">");
+    }
 
+    // Lock icon sits next to the lock focus marker; color hints state
+    uint16_t lockColor = RGB565(120, 120, 120);
+    if (lockActive) {
+        lockColor = RGB565(0, 200, 0);
+    } else if (focus == SECTION_LOCK) {
+        lockColor = RGB565(255, 255, 0);
+    }
+    DrawLockIcon(xPos , yPos[SECTION_LOCK] - 4, lockColor);
 }
 
 // 渲染任务 - 使用render_task的图像优化方法
@@ -530,8 +592,8 @@ void render_task(void* arg)
             // 清除文字显示区域，避免重叠（使用屏幕尺寸而不是魔法数字）
             dispcolor_FillRect(0, 0, dispcolor_getWidth(), top_bar_h, BLACK);      // 顶部标题区域
             dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);    // 底部信息区域
-            dispcolor_FillRect(0, 20, 10, 165, BLACK);      // 热成像左侧区域
-            dispcolor_FillRect(230, 20, 10, 165, BLACK);      // 热成像右侧区域
+            dispcolor_FillRect(0, 20, 10, dispcolor_getHeight() - 20, BLACK);      // 热成像左侧区域
+            dispcolor_FillRect(230, 20, 10, dispcolor_getHeight() - 20, BLACK);      // 热成像右侧区域
 
 
             // 显示标题（根据字体高度垂直居中）
@@ -820,7 +882,7 @@ void render_task(void* arg)
                 dispcolor_FillRect(0, dispcolor_getHeight() - bottom_bar_h, dispcolor_getWidth(), bottom_bar_h, BLACK);
             }
 
-            DrawSectionFocus(currentFocus, top_bar_h, bottom_bar_h, img_y_start, img_height);
+            DrawSectionFocus(currentFocus, top_bar_h, bottom_bar_h, img_y_start, img_height, fixScaleTempActive);
             
             // 在最终提交到LCD之前，如果有overlay提示则绘制
             if (overlay_active) {
@@ -907,6 +969,11 @@ void render_task(void* arg)
                 forceRender = true;
                 continue;
             }
+            if (currentFocus == SECTION_LOCK && !subItemMode) {
+                // Lock focus triggers temporary fix-scale without entering sub-items
+                apply_fix_scale(false);
+                continue;
+            }
             if (paletteSelectMode) {
                 // 在调色板选择模式，右拨确认并退出
                 settings_write_all();
@@ -927,38 +994,7 @@ void render_task(void* arg)
                         paletteSelectMode = true;
                     } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_CENTER) {
                         // 在 fix_scale 子项，按下确认临时固定当前帧的原始 min/max（仅保留 5 秒），然后恢复原设置
-                        if (!fixScaleTempActive) {
-                            // 保存原始设置以便恢复
-                            fixScalePrevAutoMode = settingsParms.AutoScaleMode;
-                            fixScalePrevMin = settingsParms.minTempNew;
-                            fixScalePrevMax = settingsParms.maxTempNew;
-
-                            // 应用临时固定量程（不持久化到 NVS）
-                            settingsParms.AutoScaleMode = false;
-                            settingsParms.minTempNew = lastFrameMinTemp;
-                            settingsParms.maxTempNew = lastFrameMaxTemp;
-
-                            // 启动 5 秒定时器
-                            fixScaleTempActive = true;
-                            fixScaleExpireTick = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
-
-                            // 退出子项选择模式并提示（说明为临时固定）
-                            subItemMode = false;
-                            snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale (5s): %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
-                            overlay_line2[0] = '\0';
-                            overlay_active = true;
-                            overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
-                            forceRender = true;
-                        } else {
-                            // 如果已经处于临时固定状态，刷新过期时间并更新值
-                            settingsParms.minTempNew = lastFrameMinTemp;
-                            settingsParms.maxTempNew = lastFrameMaxTemp;
-                            fixScaleExpireTick = xTaskGetTickCount() + pdMS_TO_TICKS(5000);
-                            snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale (5s refreshed): %.1f..%.1f", settingsParms.minTempNew, settingsParms.maxTempNew);
-                            overlay_active = true;
-                            overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
-                            forceRender = true;
-                        }
+                        apply_fix_scale(true);
                     } else if (currentFocus == SECTION_TITLE && currentTitleSubSelection == TITLE_SUB_RIGHT) {
                     // 在温度单位子项，进入温度单位选择模式
                     tempUnitSelectMode = true;
