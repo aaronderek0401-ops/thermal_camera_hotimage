@@ -395,11 +395,22 @@ static void DrawSectionFocus(focus_section_t focus,
     // Lock icon sits next to the lock focus marker; color hints state
     uint16_t lockColor = GRAY;
     if (lockActive) {
-        lockColor = RGB565(0, 255, 128);
+        lockColor = WHITE;
     } else if (focus == SECTION_LOCK) {
         lockColor = WHITE;
     }
+    
+    // Draw background highlighting for lock icon area
+    if (lockActive) {
+        // Red background when locked
+        dispcolor_FillRect(0, yPos[SECTION_LOCK] - 7, 10, 7, RGB565(0, 255, 128));
+    } else if (focus == SECTION_LOCK) {
+        // Blue background when focused
+        // dispcolor_FillRect(0, yPos[SECTION_LOCK] - 7, 10, 7, RGB565(0, 0, 250));
+    }
+    
     DrawLockIcon(xPos , yPos[SECTION_LOCK] - 4, lockColor);
+
 }
 
 // 渲染任务 - 使用render_task的图像优化方法
