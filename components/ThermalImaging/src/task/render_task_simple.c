@@ -364,7 +364,7 @@ static void DrawLockIcon(int16_t x, int16_t y, uint16_t color)
     dispcolor_DrawLine(x + 3, y - 2, x + 3, y - 1, color);
     dispcolor_DrawRectangle(x - 3, y - 1, x + 3, y + 3, color);
     dispcolor_DrawLine(x, y, x, y + 2, color);
-}
+}//man!
 
 static void DrawSectionFocus(focus_section_t focus,
                              uint16_t top_bar_h,
