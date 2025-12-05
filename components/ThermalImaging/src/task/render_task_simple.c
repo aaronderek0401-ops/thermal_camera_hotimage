@@ -430,80 +430,136 @@ void render_task(void* arg)
     printf("Image buffers allocated successfully\n");
     
     // 开机动画：在等待MLX90640初始化期间显示
+    // 开机动画：BOM_FRUIT 热成像风格 "Sensor Warm-up" (修复版)
     {
         const char* brand_text = "BOM_FRUIT";
-        const char* sub_text = "Thermal Camera";
+        const char* sub_text = "Thermal Camera"; 
         const int16_t screen_w = dispcolor_getWidth();
         const int16_t screen_h = dispcolor_getHeight();
-        
+
         // 动画参数
-        const int total_frames = 40;        // 总帧数
-        const int frame_delay_ms = 50;      // 每帧延迟(ms)，总时长约2秒
-        
+        const int total_frames = 50;        
+        const int frame_delay_ms = 40;      
+
+        // 字体尺寸计算
+        int16_t brand_w = dispcolor_getStrWidth(FONTID_16F, brand_text);
+        int16_t brand_h = 16;
+        int16_t brand_x = (screen_w - brand_w) / 2;
+        int16_t brand_y = (screen_h / 2) - brand_h; 
+
+        int16_t sub_w = dispcolor_getStrWidth(FONTID_6X8M, sub_text);
+        int16_t sub_x = (screen_w - sub_w) / 2;
+        int16_t sub_y = (screen_h / 2) + 12;
+
         for (int frame = 0; frame < total_frames; frame++) {
             dispcolor_ClearScreen();
-            
-            // 计算动画进度 (0.0 ~ 1.0)
+
+            // 0.0 ~ 1.0 的进度
             float progress = (float)frame / (float)(total_frames - 1);
+
+            // --- 视觉元素 1: 模拟热成像色谱进度条 (Ironbow Gradient) ---
+            int16_t bar_w = screen_w - 40;
+            int16_t bar_h = 6;
+            int16_t bar_start_x = 20;
+            int16_t bar_y = screen_h - 20;
             
-            // 主标题 "BOM_FRUIT" - 从左侧滑入并放大
-            int16_t brand_w = dispcolor_getStrWidth(FONTID_16F, brand_text);
-            int16_t brand_h = 16;
-            int16_t brand_target_x = (screen_w - brand_w) / 2;
-            int16_t brand_target_y = (screen_h / 2) - brand_h - 5;
-            
-            // 滑入效果：从左侧外部滑入到中心
-            int16_t brand_start_x = -brand_w;
-            int16_t brand_x = brand_start_x + (int16_t)((brand_target_x - brand_start_x) * progress);
-            int16_t brand_y = brand_target_y;
-            
-            // 颜色渐变：从暗红到亮橙色
-            uint8_t r = (uint8_t)(100 + 155 * progress);
-            uint8_t g = (uint8_t)(50 + 150 * progress);
-            uint8_t b = (uint8_t)(0 + 50 * progress);
-            uint16_t brand_color = RGB565(r, g, b);
-            
-            // 绘制主标题（带阴影）
-            dispcolor_DrawString(brand_x + 1, brand_y + 1, FONTID_16F, (uint8_t*)brand_text, RGB565(30, 30, 30));
-            dispcolor_DrawString(brand_x, brand_y, FONTID_16F, (uint8_t*)brand_text, brand_color);
-            
-            // 副标题 "Thermal Camera" - 淡入效果（后半段才显示）
-            if (progress > 0.4f) {
-                float sub_progress = (1.0f - progress) / 0.6f; // 0 ~ 1(1.0f - progress) / 0.6f
-                int16_t sub_w = dispcolor_getStrWidth(FONTID_6X8M, sub_text);
-                int16_t sub_x = (screen_w - sub_w) / 2;
-                int16_t sub_y = (screen_h / 2) + 10;
+            // 绘制进度条边框
+            dispcolor_DrawRectangle(bar_start_x - 2, bar_y - 2, bar_start_x + bar_w + 2, bar_y + bar_h + 2, RGB565(80, 80, 80));
+
+            // 动态绘制色谱填充
+            int16_t current_fill_w = (int16_t)(bar_w * progress);
+            for (int i = 0; i < current_fill_w; i++) {
+                float pos = (float)i / (float)bar_w; 
+                uint8_t r_bar, g_bar, b_bar;
                 
-                // 颜色淡入
-                uint8_t sub_gray = (uint8_t)(180 * sub_progress);
-                uint16_t sub_color = RGB565(sub_gray, sub_gray, sub_gray);
+                // Ironbow 伪彩色算法
+                if (pos < 0.25) {      // 黑 -> 蓝
+                    r_bar = 0; g_bar = 0; b_bar = (uint8_t)(pos * 4 * 255);
+                } else if (pos < 0.5) { // 蓝 -> 紫红
+                    r_bar = (uint8_t)((pos - 0.25) * 4 * 255); g_bar = 0; b_bar = 255;
+                } else if (pos < 0.75) { // 紫红 -> 橙
+                    r_bar = 255; g_bar = (uint8_t)((pos - 0.5) * 4 * 255); b_bar = (uint8_t)(255 - (pos - 0.5) * 4 * 255);
+                } else {                // 橙 -> 黄/白
+                    r_bar = 255; g_bar = 255; b_bar = (uint8_t)((pos - 0.75) * 4 * 255);
+                }
                 
-                dispcolor_DrawString(sub_x, sub_y, FONTID_6X8M, (uint8_t*)sub_text, sub_color);
+                // 修复：使用 DrawLine 替代 DrawVLine
+                // 画一条垂直线：起点 (x, y)，终点 (x, y + h - 1)
+                dispcolor_DrawLine(bar_start_x + i, bar_y, bar_start_x + i, bar_y + bar_h - 1, RGB565(r_bar, g_bar, b_bar));
             }
-            
-            // 底部进度条
-            int16_t bar_w = screen_w - 60;
-            int16_t bar_h = 4;
-            int16_t bar_x = 30;
-            int16_t bar_y = screen_h - 30;
-            int16_t fill_w = (int16_t)(bar_w * progress);
-            
-            // 进度条边框
-            dispcolor_DrawRectangle(bar_x - 1, bar_y - 1, bar_x + bar_w + 1, bar_y + bar_h + 1, RGB565(80, 80, 80));
-            // 进度条填充
-            if (fill_w > 0) {
-                dispcolor_FillRect(bar_x, bar_y, fill_w, bar_h, RGB565(0, 200, 100));
+
+            // --- 视觉元素 2: 中央校准瞄准框 (Expanding Crosshair) ---
+            if (frame < total_frames - 10) {
+                int16_t cross_size = 30 - (int16_t)(20 * progress); 
+                uint16_t cross_color = WHITE;       
+                int16_t cx = screen_w / 2;
+                int16_t cy = screen_h / 2 - 8; 
+                int16_t line_len = 5;
+
+                // 修复：使用 DrawLine 替代 DrawHLine/VLine
+                // 左上
+                dispcolor_DrawLine(cx - cross_size, cy - cross_size, cx - cross_size + line_len - 1, cy - cross_size, cross_color); // H
+                dispcolor_DrawLine(cx - cross_size, cy - cross_size, cx - cross_size, cy - cross_size + line_len - 1, cross_color); // V
+                
+                // 右上
+                dispcolor_DrawLine(cx + cross_size - line_len + 1, cy - cross_size, cx + cross_size, cy - cross_size, cross_color); // H
+                dispcolor_DrawLine(cx + cross_size, cy - cross_size, cx + cross_size, cy - cross_size + line_len - 1, cross_color); // V
+
+                // 左下
+                dispcolor_DrawLine(cx - cross_size, cy + cross_size, cx - cross_size + line_len - 1, cy + cross_size, cross_color); // H
+                dispcolor_DrawLine(cx - cross_size, cy + cross_size - line_len + 1, cx - cross_size, cy + cross_size, cross_color); // V
+
+                // 右下
+                dispcolor_DrawLine(cx + cross_size - line_len + 1, cy + cross_size, cx + cross_size, cy + cross_size, cross_color); // H
+                dispcolor_DrawLine(cx + cross_size, cy + cross_size - line_len + 1, cx + cross_size, cy + cross_size, cross_color); // V
             }
+
+            // --- 视觉元素 3: BOM_FRUIT 文字 "升温" 效果 ---
+            uint8_t text_r, text_g, text_b;
+            if (progress < 0.3) {
+                text_r = 0; text_g = 0; text_b = 100 + (uint8_t)(155 * (progress / 0.3));
+            } else if (progress < 0.7) {
+                float p2 = (progress - 0.3) / 0.4;
+                text_r = (uint8_t)(255 * p2); text_g = 0; text_b = (uint8_t)(255 * (1.0 - p2));
+            } else {
+                float p3 = (progress - 0.7) / 0.3;
+                text_r = 255; text_g = (uint8_t)(255 * p3); text_b = (uint8_t)(255 * p3);
+            }
+            uint16_t text_color = RGB565(text_r, text_g, text_b);
             
-            // 更新显示
+            // 绘制主标题
+            if (progress > 0.5) {
+                // 红色发光阴影
+                // dispcolor_DrawString(brand_x - 1, brand_y, FONTID_16F, (uint8_t*)brand_text, GRAY);
+                dispcolor_DrawString(brand_x + 1, brand_y + 1, FONTID_16F, (uint8_t*)brand_text, GRAY);
+            }
+            // 核心层
+            dispcolor_DrawString(brand_x, brand_y, FONTID_16F, (uint8_t*)brand_text, RGB565(0, 255, 128));
+
+            // --- 视觉元素 4: 副标题打字机效果 ---
+            if (progress > 0.5) {
+                float sub_p = (progress - 0.5) / 0.5; // 0.0 ~ 1.0
+                int char_count = (int)(strlen(sub_text) * sub_p);
+                
+                char temp_sub[32]; 
+                strncpy(temp_sub, sub_text, char_count);
+                temp_sub[char_count] = '\0'; 
+                
+                dispcolor_DrawString(sub_x, sub_y, FONTID_6X8M, (uint8_t*)temp_sub, WHITE);
+            }
+
             st7789_update();
             vTaskDelay(frame_delay_ms / portTICK_PERIOD_MS);
         }
+
+        // 最终定格
+        vTaskDelay(500 / portTICK_PERIOD_MS);
         
-        // 最后停留一会儿显示完整画面
-        vTaskDelay(200 / portTICK_PERIOD_MS);
-        
-        // 清屏准备进入主界面
+        // 闪烁快门
+        dispcolor_FillRect(0, 0, screen_w, screen_h, WHITE);
+        st7789_update();
+        vTaskDelay(30 / portTICK_PERIOD_MS);
+
         dispcolor_ClearScreen();
         st7789_update();
     }
@@ -909,19 +965,31 @@ void render_task(void* arg)
             if (fixScaleTempActive) {
                 TickType_t now = xTaskGetTickCount();
                 if (now >= fixScaleExpireTick) {
-                    // 恢复之前的 AutoScale 与量程
-                    settingsParms.AutoScaleMode = fixScalePrevAutoMode;
-                    settingsParms.minTempNew = fixScalePrevMin;
-                    settingsParms.maxTempNew = fixScalePrevMax;
+                    // 仅当画面超出当前固定量程时才恢复 AutoScale 与量程
+                    // 如果当前帧的最小/最大值超出当前设置范围，则恢复；否则继续保留固定量程并延长检查
+                    if ((lastFrameMinTemp < settingsParms.minTempNew) || (lastFrameMaxTemp > settingsParms.maxTempNew)) {
+                        // 恢复之前的 AutoScale 与量程
+                        settingsParms.AutoScaleMode = fixScalePrevAutoMode;
+                        settingsParms.minTempNew = fixScalePrevMin;
+                        settingsParms.maxTempNew = fixScalePrevMax;
 
-                    fixScaleTempActive = false;
+                        fixScaleTempActive = false;
 
-                    // 显示提示并触发重绘
-                    snprintf(overlay_line1, sizeof(overlay_line1), "AutoScale restored");
-                    overlay_line2[0] = '\0';
-                    overlay_active = true;
-                    overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
-                    forceRender = true;
+                        // 显示提示并触发重绘
+                        snprintf(overlay_line1, sizeof(overlay_line1), "AutoScale restored");
+                        overlay_line2[0] = '\0';
+                        overlay_active = true;
+                        overlay_expire_tick = xTaskGetTickCount() + pdMS_TO_TICKS(900);
+                        forceRender = true;
+                    } else {
+                        // 未超出范围：保留固定量程，延长检查时间（再过 1s 检查一次）并提示已保留
+                        fixScaleExpireTick = now + pdMS_TO_TICKS(1000);
+                        snprintf(overlay_line1, sizeof(overlay_line1), "Fixed scale retained");
+                        overlay_line2[0] = '\0';
+                        overlay_active = true;
+                        overlay_expire_tick = now + pdMS_TO_TICKS(900);
+                        forceRender = true;
+                    }
                 }
             }
             
