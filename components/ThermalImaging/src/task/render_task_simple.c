@@ -393,11 +393,11 @@ static void DrawSectionFocus(focus_section_t focus,
     }
 
     // Lock icon sits next to the lock focus marker; color hints state
-    uint16_t lockColor = RGB565(120, 120, 120);
+    uint16_t lockColor = GRAY;
     if (lockActive) {
-        lockColor = RGB565(0, 200, 0);
+        lockColor = RGB565(0, 255, 128);
     } else if (focus == SECTION_LOCK) {
-        lockColor = RGB565(255, 255, 0);
+        lockColor = WHITE;
     }
     DrawLockIcon(xPos , yPos[SECTION_LOCK] - 4, lockColor);
 }
